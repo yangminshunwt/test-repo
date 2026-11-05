@@ -34,8 +34,16 @@ test('製品のパス設定に、VERSION の製品ごとのフィルタがあり
   }
 });
 
-test('リリース準備の製品の選択肢が、VERSION の製品と同じ', { skip: !exists('.github/workflows/release-prep.yml') }, () => {
-  const options = /\n {6}product:[\s\S]*?options:\s*\[([^\]]*)\]/.exec(read('.github/workflows/release-prep.yml'));
-  assert.ok(options, 'release-prep.yml の product の options が見つかりません');
-  assert.deepEqual(flowList(options[1]).sort(), products);
-});
+// 古いタグから作ったリリースブランチでは VERSION の製品が main より少ないことがあるので、
+// VERSION の製品がすべて選べることを確かめる（選択肢が多いぶんには、実行したときに止まる）。
+for (const workflow of ['release-prep.yml', 'hotfix-prep.yml']) {
+  const file = `.github/workflows/${workflow}`;
+  test(`${workflow} の製品の選択肢に、VERSION の製品がすべてある`, { skip: !exists(file) }, () => {
+    const options = /\n {6}product:[\s\S]*?options:\s*\[([^\]]*)\]/.exec(read(file));
+    assert.ok(options, `${workflow} の product の options が見つかりません`);
+    const choices = flowList(options[1]);
+    for (const product of products) {
+      assert.ok(choices.includes(product), `${workflow} の product の options に ${product} がありません`);
+    }
+  });
+}
