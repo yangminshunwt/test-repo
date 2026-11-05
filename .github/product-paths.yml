@@ -1,0 +1,35 @@
+# 変更が影響する製品を判定する（release-label-check.yml の dorny/paths-filter が使う）。
+# 製品ごとに、その製品が使うパスを書く（フィルタ名は VERSION ファイルの製品名と同じにする）。
+# 複数の製品で共有するパスは、使う製品すべてに書く。
+# どこにも書かれていないパスの変更は、すべての製品に影響するとみなす。
+
+# すべての製品に共通するパス
+common: &common
+  - 'Shared/**'
+  - '.github/**'
+
+product-a: &product-a
+  - *common
+  - 'ProductA/**'
+  - 'SharedAB/**'
+  - 'SharedAC/**'
+
+product-b: &product-b
+  - *common
+  - 'ProductB/**'
+  - 'SharedAB/**'
+
+product-c: &product-c
+  - *common
+  - 'ProductC/**'
+  - 'SharedAC/**'
+
+# どの製品にも影響しないファイル
+none: &none
+  - 'VERSION'
+  - 'README.md'
+  - 'docs/**'
+
+# どこにも書かれていないパスを見つけるためのフィルタ。製品を足したら listed にも足す。
+listed: [*product-a, *product-b, *product-c, *none]
+all: ['**']
