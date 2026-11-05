@@ -140,6 +140,20 @@ async function releaseCandidate({ github, context, core }) {
   await core.summary.addHeading(`${branch} の rc`, 3).addList([message]).write();
 }
 
+// リリースしたバージョンのリリースラベルをアーカイブする（ラベルを選ぶ画面に出なくなる。付いている PR からは外れない）。
+// リリースタグとリリースラベルは同じ名前（<製品名>/vX.Y.Z）。
+async function archiveReleaseLabel(github, core, repo, label) {
+  try {
+    const { data } = await github.rest.issues.getLabel({ ...repo, name: label });
+    if (data.archived_at) return `ラベル ${label} はすでにアーカイブされています。`;
+    await github.rest.issues.updateLabel({ ...repo, name: label, archived: true });
+    return `ラベル ${label} をアーカイブしました。`;
+  } catch (error) {
+    core.warning(`ラベル ${label} をアーカイブできませんでした（${error.message}）。`);
+    return `ラベル ${label} はアーカイブできませんでした。`;
+  }
+}
+
 // rc より後にリリースブランチに入った PR を、次の修正にどう入れるかの案内を作る
 function guideForLateChanges(pulls) {
   const guides = [];
@@ -175,6 +189,7 @@ async function release({ github, context, core }) {
     await createTag(github, repo, plan.releaseTag, rc, `${plan.product} ${plan.version}`);
     results.push(`${plan.releaseTag} を ${plan.latestRcTag} と同じコミット（${rc.slice(0, 7)}）に打ちました。`);
   }
+  results.push(await archiveReleaseLabel(github, core, repo, plan.releaseTag));
 
   let head;
   try {

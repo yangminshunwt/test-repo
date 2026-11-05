@@ -11,14 +11,14 @@ module.exports = async ({ github, context, core }) => {
   const pr = context.payload.pull_request;
 
   // イベントの後に付け外しされたラベルも含めるため、今のラベルを取り直す。
-  const labels = (
-    await github.paginate(github.rest.issues.listLabelsOnIssue, {
-      owner,
-      repo,
-      issue_number: pr.number,
-      per_page: 100,
-    })
-  ).map((label) => label.name);
+  const labelObjects = await github.paginate(github.rest.issues.listLabelsOnIssue, {
+    owner,
+    repo,
+    issue_number: pr.number,
+    per_page: 100,
+  });
+  const labels = labelObjects.map((label) => label.name);
+  const archivedLabels = labelObjects.filter((label) => label.archived_at).map((label) => label.name);
 
   // チェックアウトされているのは PR をマージした結果のコミットで、その第 1 親がマージ前のマージ先になる。
   const versionFile = fs.readFileSync('VERSION', 'utf8');
@@ -55,6 +55,7 @@ module.exports = async ({ github, context, core }) => {
     versionFile,
     baseVersionFile,
     branches,
+    archivedLabels,
   });
   if (affected.reason) warnings.unshift(affected.reason);
 
