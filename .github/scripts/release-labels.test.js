@@ -10,6 +10,7 @@ const {
   parseReleaseBranch,
   parseVersionFile,
   planHotfixPrep,
+  planRelease,
   planReleasePrep,
   setVersion,
 } = require('./release-labels.js');
@@ -343,4 +344,26 @@ test('修正フェーズ：知らない製品や、リリースタグがまだ�
   const version = versionFile('1.5.0', '1.4.0');
   assert.match(planHotfixPrep({ versionFile: version, product: 'product-c', tags: [] }).errors[0], /product-c は VERSION ファイルにありません/);
   assert.match(planHotfixPrep({ versionFile: version, product: 'product-b', tags: ['product-a/v1.0.0', 'product-b/v1.0.0-rc.1'] }).errors[0], /リリースタグ/);
+});
+
+test('リリース手順：rc タグは 1 から順に、リリースタグはブランチのバージョン', () => {
+  const branch = 'release/product-a/v1.4.0';
+  assert.deepEqual(planRelease({ branch, tags: [] }), {
+    errors: [],
+    product: 'product-a',
+    version: '1.4.0',
+    releaseTag: 'product-a/v1.4.0',
+    released: false,
+    latestRcTag: null,
+    nextRcTag: 'product-a/v1.4.0-rc.1',
+  });
+  const tags = ['product-a/v1.4.0-rc.1', 'product-a/v1.4.0-rc.10', 'product-a/v1.4.0-rc.2', 'product-a/v1.4.0-rc.x', 'product-a/v1.4.1-rc.3', 'product-b/v1.4.0-rc.20'];
+  const plan = planRelease({ branch, tags });
+  assert.equal(plan.latestRcTag, 'product-a/v1.4.0-rc.10');
+  assert.equal(plan.nextRcTag, 'product-a/v1.4.0-rc.11');
+  assert.equal(planRelease({ branch, tags: [...tags, 'product-a/v1.4.0'] }).released, true);
+});
+
+test('リリース手順：リリースブランチ以外では NG', () => {
+  assert.match(planRelease({ branch: 'main', tags: [] }).errors[0], /リリースブランチ/);
 });

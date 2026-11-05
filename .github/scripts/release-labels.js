@@ -291,6 +291,30 @@ function planHotfixPrep({ versionFile, product, tags }) {
   };
 }
 
+// リリース手順（開発ルールの「リリース手順」）で打つタグを、リリースブランチの名前と今あるタグから決める。
+// rc タグは <製品名>/vX.Y.Z-rc.N（N は 1 から順に）、リリースタグは <製品名>/vX.Y.Z。
+function planRelease({ branch, tags }) {
+  const release = parseReleaseBranch(branch);
+  if (!release) {
+    return { errors: [`${branch} はリリースブランチ（release/<製品名>/vX.Y.Z）ではありません。Use workflow from でリリースブランチを選んで実行してください。`] };
+  }
+  const releaseTag = `${release.product}/v${release.version}`;
+  const rcNumbers = tags
+    .map((tag) => (tag.startsWith(`${releaseTag}-rc.`) ? tag.slice(`${releaseTag}-rc.`.length) : ''))
+    .filter((n) => /^[1-9]\d*$/.test(n))
+    .map(Number);
+  const latestRc = rcNumbers.length > 0 ? Math.max(...rcNumbers) : null;
+  return {
+    errors: [],
+    product: release.product,
+    version: release.version,
+    releaseTag,
+    released: tags.includes(releaseTag),
+    latestRcTag: latestRc === null ? null : `${releaseTag}-rc.${latestRc}`,
+    nextRcTag: `${releaseTag}-rc.${(latestRc ?? 0) + 1}`,
+  };
+}
+
 // VERSION ファイルの、その製品の行だけを書き換える（コメントやほかの行はそのまま）。
 function setVersion(versionFile, product, version) {
   let found = false;
@@ -307,11 +331,13 @@ function setVersion(versionFile, product, version) {
 module.exports = {
   checkReleaseLabels,
   compareVersions,
+  extractReleaseLabels,
   findAffectedProducts,
   findCherryPickTargets,
   parseReleaseBranch,
   parseVersionFile,
   planHotfixPrep,
+  planRelease,
   planReleasePrep,
   setVersion,
 };
