@@ -11,10 +11,18 @@ all-products: &all-products
 product-a: &product-a
   - *all-products
   - 'ProductA/**'
+  - 'SharedAB/**'
+  - 'SharedAC/**'
 
 product-b: &product-b
   - *all-products
   - 'ProductB/**'
+  - 'SharedAB/**'
+
+product-c: &product-c
+  - *all-products
+  - 'ProductC/**'
+  - 'SharedAC/**'
 
 # どの製品にも影響しないファイル
 none: &none
@@ -23,5 +31,5 @@ none: &none
   - 'docs/**'
 
 # どこにも書かれていないパスを見つけるためのフィルタ。製品を足したら listed にも足す。
-listed: [*product-a, *product-b, *none]
+listed: [*product-a, *product-b, *product-c, *none]
 all: ['**']
