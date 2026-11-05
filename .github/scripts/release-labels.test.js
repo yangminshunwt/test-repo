@@ -325,3 +325,60 @@ test('リリース準備：VERSION ファイルのその製品の行だけを書
   assert.equal(setVersion(versionFile('1.5.0', '1.4.0'), 'product-b', '1.5.0'), versionFile('1.5.0', '1.5.0'));
   assert.throws(() => setVersion(versionFile('1.5.0', '1.4.0'), 'product-c', '1.0.0'));
 });
+<<<<<<< HEAD
+=======
+
+test('修正フェーズ：最新のリリースタグから、次のパッチバージョンのリリースブランチを作る', () => {
+  const tags = ['product-a/v1.2.0', 'product-a/v1.10.0-rc.1', 'product-a/v1.9.3', 'product-a/v1.10.0-rc.2', 'product-b/v2.0.0', 'product-a/v1.3.0'];
+  assert.deepEqual(planHotfixPrep({ versionFile: versionFile('1.11.0', '2.1.0'), product: 'product-a', tags }), {
+    errors: [],
+    releasedTag: 'product-a/v1.9.3',
+    releasedVersion: '1.9.3',
+    nextVersion: '1.9.4',
+    releaseBranch: 'release/product-a/v1.9.4',
+    nextLabel: 'product-a/v1.9.4',
+  });
+});
+
+test('修正フェーズ：知らない製品や、リリースタグがまだない製品は NG', () => {
+  const version = versionFile('1.5.0', '1.4.0');
+  assert.match(planHotfixPrep({ versionFile: version, product: 'product-c', tags: [] }).errors[0], /product-c は VERSION ファイルにありません/);
+  assert.match(planHotfixPrep({ versionFile: version, product: 'product-b', tags: ['product-a/v1.0.0', 'product-b/v1.0.0-rc.1'] }).errors[0], /リリースタグ/);
+});
+
+test('リリース手順：rc タグは 1 から順に、リリースタグはブランチのバージョン', () => {
+  const branch = 'release/product-a/v1.4.0';
+  assert.deepEqual(planRelease({ branch, tags: [] }), {
+    errors: [],
+    product: 'product-a',
+    version: '1.4.0',
+    releaseTag: 'product-a/v1.4.0',
+    released: false,
+    latestRcTag: null,
+    nextRcTag: 'product-a/v1.4.0-rc.1',
+  });
+  const tags = ['product-a/v1.4.0-rc.1', 'product-a/v1.4.0-rc.10', 'product-a/v1.4.0-rc.2', 'product-a/v1.4.0-rc.x', 'product-a/v1.4.1-rc.3', 'product-b/v1.4.0-rc.20'];
+  const plan = planRelease({ branch, tags });
+  assert.equal(plan.latestRcTag, 'product-a/v1.4.0-rc.10');
+  assert.equal(plan.nextRcTag, 'product-a/v1.4.0-rc.11');
+  assert.equal(planRelease({ branch, tags: [...tags, 'product-a/v1.4.0'] }).released, true);
+});
+
+test('リリース手順：リリースブランチ以外では NG', () => {
+  assert.match(planRelease({ branch: 'main', tags: [] }).errors[0], /リリースブランチ/);
+});
+
+test('アーカイブ済み（リリース済み）のラベルは NG', () => {
+  const result = checkReleaseLabels({
+    baseBranch: 'main',
+    labels: ['product-a/v1.4.0'],
+    affectedProducts: ['product-a'],
+    versionFile: versionFile('1.5.0', '1.5.0'),
+    baseVersionFile: versionFile('1.5.0', '1.5.0'),
+    branches: BRANCHES,
+    archivedLabels: ['product-a/v1.4.0'],
+  });
+  assertError(result, /リリース済みのラベル（アーカイブ済み）/);
+  assert.equal(result.errors.length, 1);
+});
+>>>>>>> 65f2ec2 (Archive release labels on release and reject archived labels (#139))

@@ -96,7 +96,8 @@ function extractReleaseLabels(labels, products) {
 // affectedProducts: 変更が影響する製品
 // versionFile / baseVersionFile: マージ後とマージ前の VERSION ファイルの中身
 // branches: 今あるブランチの名前（リリースブランチを含む）
-function checkReleaseLabels({ baseBranch, labels, affectedProducts, versionFile, baseVersionFile, branches }) {
+// archivedLabels: PR に付いているラベルのうち、アーカイブ済みのもの（リリース手順でリリース済みのラベルをアーカイブする）
+function checkReleaseLabels({ baseBranch, labels, affectedProducts, versionFile, baseVersionFile, branches, archivedLabels = [] }) {
   const versions = parseVersionFile(versionFile);
   const baseVersions = parseVersionFile(baseVersionFile);
   const products = Object.keys(versions);
@@ -192,7 +193,9 @@ function checkReleaseLabels({ baseBranch, labels, affectedProducts, versionFile,
     }
   }
   for (const { label, product, version } of releaseLabels) {
-    if (compareVersions(version, versions[product]) > 0) {
+    if (archivedLabels.includes(label)) {
+      errors.push(`${label}：リリース済みのラベル（アーカイブ済み）です。これから入るリリースのバージョンを付けてください。`);
+    } else if (compareVersions(version, versions[product]) > 0) {
       errors.push(`${label}：マージ後の VERSION（${product}/${versions[product]}）より新しいバージョンです。`);
     } else if (!knownVersions.get(product).has(version)) {
       errors.push(`${label}：${product} に v${version} のブランチがありません。main の VERSION か、今あるリリースブランチのバージョンを付けてください。`);
