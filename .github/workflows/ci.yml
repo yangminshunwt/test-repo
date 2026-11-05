@@ -1,0 +1,28 @@
+name: CI
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  unit-test-product-a:
+    name: unit test for product-a
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Run tests
+        run: test ! -e ProductA/FAIL
+
+  unit-test-product-b:
+    name: unit test for product-b
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Run tests
+        run: test ! -e ProductB/FAIL
