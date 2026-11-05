@@ -1,0 +1,76 @@
+name: Release prep
+
+# リリースの準備フェーズに入る（開発ルールの「開発フェーズの入り方」）。
+# main から今のバージョンのリリースブランチを作り、次のバージョンのリリースラベルを作ってから、
+# main の VERSION を次のバージョンに上げる PR を出す。
+on:
+  workflow_dispatch:
+    inputs:
+      product:
+        description: 製品名（VERSION ファイルにあるもの）
+        required: true
+        type: string
+      next_version:
+        description: main の次のバージョン（例：1.2.0）
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-prep
+  cancel-in-progress: false
+
+jobs:
+  release-prep:
+    name: release prep
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      # GITHUB_TOKEN で作った PR ではチェックが走らないので、GitHub App のトークンを使う
+      - id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ vars.CHERRY_PICK_APP_CLIENT_ID }}
+          private-key: ${{ secrets.CHERRY_PICK_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-issues: write # リリースラベルを作る
+          permission-pull-requests: write
+
+      - id: prepare
+        uses: actions/github-script@v9
+        env:
+          PRODUCT: ${{ inputs.product }}
+          NEXT_VERSION: ${{ inputs.next_version }}
+        with:
+          github-token: ${{ steps.app-token.outputs.token }}
+          script: |
+            const { prepare } = require('./.github/scripts/release-prep.js')
+            await prepare({ github, context, core })
+
+      # 製品名と次のバージョンは、prepare ステップで確かめてある
+      - id: pull-request
+        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          base: main
+          branch: release-prep/${{ inputs.product }}/v${{ inputs.next_version }}
+          delete-branch: true
+          add-paths: VERSION
+          commit-message: Bump ${{ inputs.product }} to ${{ inputs.next_version }}
+          title: Bump ${{ inputs.product }} to ${{ inputs.next_version }}
+          labels: ${{ steps.prepare.outputs.next_label }}
+          body: |
+            `main` の ${{ inputs.product }} の VERSION を ${{ steps.prepare.outputs.current_version }} から ${{ inputs.next_version }} に上げる PR です（Release prep のワークフローが作りました）。
+
+            `${{ steps.prepare.outputs.release_branch }}` はもう作ってあります。この PR がマージされるまで、${{ inputs.product }} の次のバージョン向けの PR は `main` にマージできないので、早めにマージしてください。
+
+      - name: Summary
+        env:
+          PR_URL: ${{ steps.pull-request.outputs.pull-request-url }}
+          OPERATION: ${{ steps.pull-request.outputs.pull-request-operation }}
+        run: echo "- VERSION を上げる PR（${OPERATION}）：${PR_URL}" >> "$GITHUB_STEP_SUMMARY"
