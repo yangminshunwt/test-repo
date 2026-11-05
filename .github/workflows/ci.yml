@@ -36,3 +36,4 @@ jobs:
           persist-credentials: false
       - name: Run tests
         run: node --test .github/scripts/release-labels.test.js .github/scripts/products.test.js
+# regression c2
