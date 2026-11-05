@@ -24,10 +24,18 @@ jobs:
     name: release
     runs-on: ubuntu-latest
     steps:
-      # 実行を始めた時点ではなく、ジョブを始めた時点のリリースブランチの先頭を取る
+      # スクリプトと main の VERSION は、いつも main のものを使う（リリースブランチにあるものは古いことがあるため）
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+          persist-credentials: false
+
+      # リリースブランチは、ジョブを始めた時点の先頭を、取りこぼしを確かめるためにすべての履歴つきで取る
       - uses: actions/checkout@v7
         with:
           ref: ${{ github.ref_name }}
+          path: release-work
+          fetch-depth: 0
           persist-credentials: false
 
       # タグの作成とリリースブランチの削除はルールセットで制限しているので、例外にしている GitHub App のトークンを使う
@@ -42,6 +50,7 @@ jobs:
       - uses: actions/github-script@v9
         env:
           STEP: ${{ inputs.step }}
+          RELEASE_WORK: release-work
         with:
           github-token: ${{ steps.app-token.outputs.token }}
           script: |
