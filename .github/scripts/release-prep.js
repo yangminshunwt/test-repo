@@ -3,17 +3,8 @@
 
 const { execFileSync } = require('child_process');
 const fs = require('fs');
+const { createReleaseBranch, createReleaseLabel } = require('./release-branch.js');
 const { planReleasePrep, setVersion } = require('./release-labels.js');
-
-// 422 は「すでにある」以外（ルールセット違反など）でも返るので、本当にあるかを確かめる
-async function ensureExists(createError, check) {
-  if (createError.status !== 422) throw createError;
-  try {
-    await check();
-  } catch (error) {
-    throw error.status === 404 ? createError : error;
-  }
-}
 
 // リリースブランチと次のバージョンのリリースラベルを作り、作業場所の VERSION を次のバージョンに書き換える。
 // やり直したときも続きから進められるよう、すでにあるブランチやラベルはそのまま使う。
@@ -44,42 +35,11 @@ async function prepare({ github, context, core }) {
     return;
   }
 
-  const results = [];
-  const notes = [];
-  let createdFrom = '';
-  try {
-    await github.rest.git.createRef({ ...repo, ref: `refs/heads/${plan.releaseBranch}`, sha });
-    createdFrom = sha;
-    results.push(`${plan.releaseBranch} を作りました（${sha.slice(0, 7)} から）。`);
-  } catch (error) {
-    try {
-      await ensureExists(error, () => github.rest.git.getRef({ ...repo, ref: `heads/${plan.releaseBranch}` }));
-    } catch (createError) {
-      core.setFailed(`${plan.releaseBranch} を作れませんでした（${createError.message}）。ルールセットや App の権限を確かめてください。`);
-      return;
-    }
-    results.push(`${plan.releaseBranch} はすでにあるので、そのまま使います。`);
-    // 前に作ったブランチを使うときは、入っていない変更がないかを知らせる
-    const cherryPicks = (await github.paginate(github.rest.pulls.list, { ...repo, state: 'all', base: plan.releaseBranch, per_page: 100 })).filter(
-      (pull) => pull.head.ref.startsWith('cherry-pick-'),
-    );
-    const list = (pulls) => pulls.map((pull) => `#${pull.number}`).join('、');
-    const closed = cherryPicks.filter((pull) => pull.state === 'closed' && !pull.merged_at);
-    const open = cherryPicks.filter((pull) => pull.state === 'open');
-    if (closed.length > 0) {
-      notes.push(`${plan.releaseBranch} には、マージされずに閉じた cherry-pick の PR があります（${list(closed)}）。その変更はこのブランチに入っていません。`);
-    }
-    if (open.length > 0) {
-      notes.push(`${plan.releaseBranch} への cherry-pick の PR がまだ開いています（${list(open)}）。リリースまでにマージしてください。`);
-    }
-  }
-  try {
-    await github.rest.issues.createLabel({ ...repo, name: plan.nextLabel, color: '1d76db', description: 'Release label' });
-    results.push(`ラベル ${plan.nextLabel} を作りました。`);
-  } catch (error) {
-    await ensureExists(error, () => github.rest.issues.getLabel({ ...repo, name: plan.nextLabel }));
-    results.push(`ラベル ${plan.nextLabel} はすでにあります。`);
-  }
+  const branch = await createReleaseBranch({ github, core, repo, branch: plan.releaseBranch, sha });
+  if (!branch) return;
+  const { results, notes } = branch;
+  const createdFrom = branch.created ? sha : '';
+  results.push(await createReleaseLabel({ github, repo, label: plan.nextLabel }));
   fs.writeFileSync('VERSION', setVersion(versionFile, product, plan.nextVersion));
 
   for (const line of [...results, ...notes]) core.info(line);
