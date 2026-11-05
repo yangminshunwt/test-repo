@@ -240,6 +240,41 @@ function findCherryPickTargets({ baseBranch, labels, versionFile, branches }) {
   return { targets: [...new Set(targets)].sort(), problems, missing };
 }
 
+// リリースの準備（開発ルールの「main ブランチにおいて機能の開発は終了しリリース前の準備フェーズに入りたい場合」）で、
+// main の今のバージョンから作るリリースブランチと、次のバージョンのリリースラベルを決める。
+function planReleasePrep({ versionFile, product, nextVersion }) {
+  const versions = parseVersionFile(versionFile);
+  if (!(product in versions)) {
+    return { errors: [`製品 ${product} は VERSION ファイルにありません（${Object.keys(versions).join('、')}）。`] };
+  }
+  const currentVersion = versions[product];
+  const errors = [];
+  if (!parseVersion(nextVersion)) {
+    errors.push(`次のバージョン ${nextVersion} は X.Y.Z の形式ではありません。`);
+  } else if (compareVersions(nextVersion, currentVersion) <= 0) {
+    errors.push(`次のバージョン ${nextVersion} は、main の今のバージョン（${currentVersion}）より新しくしてください。`);
+  }
+  return {
+    errors,
+    currentVersion,
+    releaseBranch: `release/${product}/v${currentVersion}`,
+    nextLabel: `${product}/v${nextVersion}`,
+  };
+}
+
+// VERSION ファイルの、その製品の行だけを書き換える（コメントやほかの行はそのまま）。
+function setVersion(versionFile, product, version) {
+  let found = false;
+  const lines = versionFile.split('\n').map((line) => {
+    const trimmed = line.trim();
+    if (trimmed === '' || trimmed.startsWith('#') || trimmed.split('/')[0] !== product) return line;
+    found = true;
+    return `${product}/${version}`;
+  });
+  if (!found) throw new Error(`VERSION ファイルに ${product} がありません`);
+  return lines.join('\n');
+}
+
 module.exports = {
   checkReleaseLabels,
   compareVersions,
@@ -247,4 +282,6 @@ module.exports = {
   findCherryPickTargets,
   parseReleaseBranch,
   parseVersionFile,
+  planReleasePrep,
+  setVersion,
 };
