@@ -163,11 +163,14 @@ function checkReleaseLabels({ baseBranch, labels, affectedProducts, versionFile,
   }
 
   // VERSION を変える PR では、バージョンは上げるだけで、ラベルは上げた後のバージョンにする。
+  // main で上げるときは、上げる前のバージョンのリリースブランチを先に作っておく（開発フェーズの入り方の順番）。
   for (const product of bumpedProducts) {
     if (release && product !== release.product) continue;
     const [before, after] = [baseVersions[product], versions[product]];
     if (before !== undefined && compareVersions(after, before) < 0) {
       errors.push(`VERSION の ${product} を ${before} から ${after} に下げています。`);
+    } else if (!release && before !== undefined && !branches.includes(`release/${product}/v${before}`)) {
+      errors.push(`VERSION の ${product} を上げる前に、release/${product}/v${before} を作ってください（Actions の「Release prep」を使うと順番どおりに進みます）。`);
     }
     for (const { label, version } of labelsByProduct.get(product) ?? []) {
       if (version !== after) {
