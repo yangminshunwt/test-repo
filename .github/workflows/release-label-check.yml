@@ -35,12 +35,13 @@ jobs:
         uses: dorny/paths-filter@v4
         with:
           filters: .github/product-paths.yml
-          predicate-quantifier: some-with-excludes
 
       - name: Check release labels
         uses: actions/github-script@v9
         env:
           AFFECTED_PRODUCTS: ${{ steps.products.outputs.changes }}
+          ALL_FILE_COUNT: ${{ steps.products.outputs.all_count }}
+          LISTED_FILE_COUNT: ${{ steps.products.outputs.listed_count }}
         with:
           script: |
             const run = require('./.github/scripts/release-label-check.js')
