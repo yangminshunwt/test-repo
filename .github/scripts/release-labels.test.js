@@ -234,7 +234,7 @@ function targets({ baseBranch = 'main', labels, version = versionFile('1.5.0', '
 }
 
 test('cherry-pick：main で、main のバージョンのラベルならどこにも cherry-pick しない', () => {
-  assert.deepEqual(targets({ labels: ['product-a/v1.5.0'] }), { targets: [], problems: [] });
+  assert.deepEqual(targets({ labels: ['product-a/v1.5.0'] }), { targets: [], problems: [], missing: [] });
 });
 
 test('cherry-pick：main で、リリースブランチのバージョンのラベルなら、そのバージョン以上のリリースブランチすべてに入れる', () => {
@@ -260,18 +260,19 @@ test('cherry-pick：共有コードの変更は、製品ごとに入れる', () 
 
 test('cherry-pick：cherry-pick の PR（行き先のバージョンのラベル）がマージされても、先へは広がらない', () => {
   const pick = { baseBranch: 'release/product-a/v1.3.0', version: versionFile('1.3.0', '1.3.0'), labels: ['product-a/v1.3.0'] };
-  assert.deepEqual(targets(pick), { targets: [], problems: [] });
+  assert.deepEqual(targets(pick), { targets: [], problems: [], missing: [] });
 });
 
-test('cherry-pick：ラベルのバージョンのブランチがなくなっていたら知らせる（それ以上のブランチには入れる）', () => {
+test('cherry-pick：ラベルのバージョンのブランチがなければ missing に返す（それ以上のブランチには入れる）', () => {
   const result = targets({ labels: ['product-a/v1.2.0'] });
   assert.deepEqual(result.targets, ['release/product-a/v1.3.0', 'release/product-a/v1.4.0']);
-  assert.match(result.problems[0], /v1\.2\.0 のリリースブランチがない/);
+  assert.deepEqual(result.missing, [{ label: 'product-a/v1.2.0', product: 'product-a', version: '1.2.0' }]);
+  assert.deepEqual(result.problems, []);
 });
 
 test('cherry-pick：リリースブランチへの PR に付いた他の製品のラベルは無視する', () => {
   const result = targets({ baseBranch: 'release/product-a/v1.4.0', version: versionFile('1.4.0', '1.4.0'), labels: ['product-a/v1.4.0', 'product-b/v1.4.0'] });
-  assert.deepEqual(result, { targets: [], problems: [] });
+  assert.deepEqual(result, { targets: [], problems: [], missing: [] });
 });
 
 test('cherry-pick：マージ先より新しいラベルや、形式の誤ったラベルは知らせる', () => {

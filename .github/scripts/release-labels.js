@@ -204,6 +204,7 @@ function checkReleaseLabels({ baseBranch, labels, affectedProducts, versionFile,
 // マージ先のバージョンは、main ならマージ後の VERSION、リリースブランチならブランチ名で数える。
 // main と同じバージョンのリリースブランチ（VERSION を上げる前に作ったもの）も行き先に入れる。
 // cherry-pick の PR には行き先のブランチのバージョンのラベルを付けるので、その PR がマージされても先へは広がらない。
+// missing には、ラベルのバージョンのリリースブランチがないもの（リリース後に消したか、まだ作っていない）を返す。
 function findCherryPickTargets({ baseBranch, labels, versionFile, branches }) {
   const versions = parseVersionFile(versionFile);
   const products = Object.keys(versions);
@@ -211,11 +212,12 @@ function findCherryPickTargets({ baseBranch, labels, versionFile, branches }) {
   const release = baseBranch === 'main' ? null : parseReleaseBranch(baseBranch);
   if (baseBranch !== 'main' && !release) {
     problems.push(`マージ先の ${baseBranch} は、main でも release/<製品名>/vX.Y.Z の形式のリリースブランチでもありません。`);
-    return { targets: [], problems };
+    return { targets: [], problems, missing: [] };
   }
 
   const releaseBranches = branches.map(parseReleaseBranch).filter(Boolean);
   const targets = [];
+  const missing = [];
   for (const { label, product, version } of releaseLabels) {
     // リリースブランチへの PR に付いた他の製品のラベルは、ラベルのチェックで止めているので無視する
     if (release && product !== release.product) continue;
@@ -226,9 +228,7 @@ function findCherryPickTargets({ baseBranch, labels, versionFile, branches }) {
     }
     const productBranches = releaseBranches.filter((branch) => branch.product === product);
     if (compareVersions(version, upper) < 0 && !productBranches.some((branch) => branch.version === version)) {
-      problems.push(
-        `${label}：${product} に v${version} のリリースブランチがないので、この変更は v${version} には入っていません（リリース済みか、まだ作っていない可能性があります）。`,
-      );
+      missing.push({ label, product, version });
     }
     const belowUpper = (branchVersion) => (release ? compareVersions(branchVersion, upper) < 0 : compareVersions(branchVersion, upper) <= 0);
     for (const branch of productBranches) {
@@ -237,7 +237,7 @@ function findCherryPickTargets({ baseBranch, labels, versionFile, branches }) {
       }
     }
   }
-  return { targets: [...new Set(targets)].sort(), problems };
+  return { targets: [...new Set(targets)].sort(), problems, missing };
 }
 
 module.exports = {
