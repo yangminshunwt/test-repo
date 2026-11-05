@@ -186,17 +186,34 @@ test('修正フェーズ：VERSION を上げるまでは、新しいバージョ
   assertError(check({ ...bump, labels: ['product-a/v1.3.0'], version: versionFile('1.3.0', '1.2.0') }), /一致しません/);
 });
 
+const PRODUCTS = ['product-a', 'product-b', 'product-c'];
+
 test('影響する製品：paths-filter が当てたフィルタのうち、VERSION にある製品だけを使う', () => {
-  const products = ['product-a', 'product-b'];
-  const result = findAffectedProducts({ matched: ['product-a', 'docs'], products, changedFileCount: 1 });
-  assert.deepEqual(result.products, ['product-a']);
+  const result = findAffectedProducts({
+    matched: ['product-a', 'product-b', 'listed', 'all'],
+    products: PRODUCTS,
+    changedFileCount: 1,
+    allFileCount: 1,
+    listedFileCount: 1,
+  });
+  assert.deepEqual(result.products, ['product-a', 'product-b']);
   assert.equal(result.reason, null);
 });
 
+test('影響する製品：パス設定に書かれていないファイルがあれば、すべての製品に影響するとみなす', () => {
+  const result = findAffectedProducts({ matched: ['product-a', 'listed', 'all'], products: PRODUCTS, changedFileCount: 2, allFileCount: 2, listedFileCount: 1 });
+  assert.deepEqual(result.products, PRODUCTS);
+  assert.match(result.reason, /書かれていないパス/);
+});
+
 test('影響する製品：変更ファイルが 3000 件を超えれば、すべての製品に影響するとみなす', () => {
-  const products = ['product-a', 'product-b'];
-  assert.deepEqual(findAffectedProducts({ matched: ['product-a'], products, changedFileCount: 3001 }).products, products);
-  assert.deepEqual(findAffectedProducts({ matched: ['product-a'], products, changedFileCount: 3000 }).products, ['product-a']);
+  const counts = { allFileCount: 3000, listedFileCount: 3000 };
+  assert.deepEqual(findAffectedProducts({ matched: ['product-a'], products: PRODUCTS, changedFileCount: 3001, ...counts }).products, PRODUCTS);
+  assert.deepEqual(findAffectedProducts({ matched: ['product-a'], products: PRODUCTS, changedFileCount: 3000, ...counts }).products, ['product-a']);
+});
+
+test('影響する製品：all と listed の件数がなければエラー（パス設定の誤り）', () => {
+  assert.throws(() => findAffectedProducts({ matched: [], products: PRODUCTS, changedFileCount: 1, allFileCount: NaN, listedFileCount: 1 }));
 });
 
 test('マージ先が main でもリリースブランチでもなければ NG', () => {

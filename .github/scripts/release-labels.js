@@ -46,10 +46,21 @@ function parseReleaseBranch(name) {
 }
 
 // 変更が影響する製品を、paths-filter が当てたフィルタの名前から決める。
-// GitHub が返す PR の変更ファイルには上限があるので、それを超える場合はすべての製品に影響するとみなす。
-function findAffectedProducts({ matched, products, changedFileCount }) {
+// 次の場合は、すべての製品に影響するとみなす。
+// - 製品のパス設定に書かれていないファイルの変更がある（all に当たったファイルが listed より多い）
+// - GitHub が返す PR の変更ファイルの上限を超えている
+function findAffectedProducts({ matched, products, changedFileCount, allFileCount, listedFileCount }) {
+  if (!Number.isInteger(allFileCount) || !Number.isInteger(listedFileCount)) {
+    throw new Error('paths-filter の all と listed の件数がありません。.github/product-paths.yml を確かめてください。');
+  }
   if (changedFileCount > MAX_LISTED_FILES) {
     return { products: [...products], reason: `変更ファイルが ${MAX_LISTED_FILES} 件を超えるため、すべての製品に影響するとみなしました。` };
+  }
+  if (allFileCount > listedFileCount) {
+    return {
+      products: [...products],
+      reason: '.github/product-paths.yml に書かれていないパスの変更があるため、すべての製品に影響するとみなしました。そのパスを使う製品に書き足してください。',
+    };
   }
   return { products: products.filter((product) => matched.includes(product)), reason: null };
 }
