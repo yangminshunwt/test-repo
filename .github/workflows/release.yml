@@ -1,0 +1,58 @@
+name: Release
+
+# リリース手順を進める（開発ルールの「リリース手順」）。Use workflow from でリリースブランチを選んで実行する。
+# - rc：リリース申請の前に、リリースブランチの先頭に次の rc タグ（<製品名>/vX.Y.Z-rc.N）を打つ
+# - release：リリースの後に、最後の rc タグと同じコミットにリリースタグ（<製品名>/vX.Y.Z）を打ち、リリースブランチを削除する
+on:
+  workflow_dispatch:
+    inputs:
+      step:
+        description: 進める手順（rc はリリース申請の前、release はリリースの後）
+        required: true
+        type: choice
+        options: [rc, release]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: release
+    runs-on: ubuntu-latest
+    steps:
+      # スクリプトと main の VERSION は、いつも main のものを使う（リリースブランチにあるものは古いことがあるため）
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+          persist-credentials: false
+
+      # リリースブランチは、ジョブを始めた時点の先頭を、取りこぼしを確かめるためにすべての履歴つきで取る
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.ref_name }}
+          path: release-work
+          fetch-depth: 0
+          persist-credentials: false
+
+      # タグの作成とリリースブランチの削除はルールセットで制限しているので、例外にしている GitHub App のトークンを使う
+      - id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ vars.CHERRY_PICK_APP_CLIENT_ID }}
+          private-key: ${{ secrets.CHERRY_PICK_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: read
+
+      - uses: actions/github-script@v9
+        env:
+          STEP: ${{ inputs.step }}
+          RELEASE_WORK: release-work
+        with:
+          github-token: ${{ steps.app-token.outputs.token }}
+          script: |
+            const { releaseCandidate, release } = require('./.github/scripts/release.js')
+            await (process.env.STEP === 'rc' ? releaseCandidate : release)({ github, context, core })
