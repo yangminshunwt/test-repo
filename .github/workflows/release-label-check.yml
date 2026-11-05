@@ -22,7 +22,7 @@ jobs:
     permissions:
       contents: read
       issues: read
-      pull-requests: write # labeler が製品のラベルを付け外しする
+      pull-requests: read
     steps:
       - uses: actions/checkout@v7
         with:
@@ -30,13 +30,17 @@ jobs:
           fetch-depth: 2
           persist-credentials: false
 
-      - name: Label affected products
-        uses: actions/labeler@v7
+      - name: Find affected products
+        id: products
+        uses: dorny/paths-filter@v4
         with:
-          sync-labels: true
+          filters: .github/product-paths.yml
+          predicate-quantifier: some-with-excludes
 
       - name: Check release labels
         uses: actions/github-script@v9
+        env:
+          AFFECTED_PRODUCTS: ${{ steps.products.outputs.changes }}
         with:
           script: |
             const run = require('./.github/scripts/release-label-check.js')

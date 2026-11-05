@@ -2,8 +2,6 @@
 // GitHub に依存しない関数だけを置き、単体テストできるようにしている。
 'use strict';
 
-const path = require('path');
-
 const VERSION_PATTERN = /^(\d+)\.(\d+)\.(\d+)$/;
 const RELEASE_BRANCH_PATTERN = /^release\/([^/]+)\/v(\d+\.\d+\.\d+)$/;
 const RELEASE_LABEL_VERSION_PATTERN = /^v(\d+\.\d+\.\d+)$/;
@@ -47,24 +45,13 @@ function parseReleaseBranch(name) {
   return match ? { product: match[1], version: match[2] } : null;
 }
 
-// 変更が影響する製品を、labeler が付けた製品のラベルから決める。
-// labeler は移動元のパスを見ず、GitHub が返す変更ファイルも上限があるので、
-// ディレクトリをまたぐ移動がある場合と、変更ファイルが上限を超える場合は、すべての製品に影響するとみなす。
-// files: GitHub が返す変更ファイル（filename、status、previous_filename）
-function findAffectedProducts({ labels, products, files, changedFileCount }) {
+// 変更が影響する製品を、paths-filter が当てたフィルタの名前から決める。
+// GitHub が返す PR の変更ファイルには上限があるので、それを超える場合はすべての製品に影響するとみなす。
+function findAffectedProducts({ matched, products, changedFileCount }) {
   if (changedFileCount > MAX_LISTED_FILES) {
     return { products: [...products], reason: `変更ファイルが ${MAX_LISTED_FILES} 件を超えるため、すべての製品に影響するとみなしました。` };
   }
-  const moved = files.find(
-    (file) => file.status === 'renamed' && path.posix.dirname(file.previous_filename) !== path.posix.dirname(file.filename),
-  );
-  if (moved) {
-    return {
-      products: [...products],
-      reason: `ディレクトリをまたぐファイルの移動（${moved.previous_filename} → ${moved.filename} など）があるため、すべての製品に影響するとみなしました。`,
-    };
-  }
-  return { products: labels.filter((label) => products.includes(label)), reason: null };
+  return { products: products.filter((product) => matched.includes(product)), reason: null };
 }
 
 // PR のラベルのうち、リリースラベル（<製品名>/vX.Y.Z）とその形式の誤りを取り出す。

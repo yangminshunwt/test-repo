@@ -10,7 +10,7 @@ module.exports = async ({ github, context, core }) => {
   const { owner, repo } = context.repo;
   const pr = context.payload.pull_request;
 
-  // labeler が直前に付け外ししたラベルを含めるため、イベントの内容ではなく今のラベルを取り直す。
+  // イベントの後に付け外しされたラベルも含めるため、今のラベルを取り直す。
   const labels = (
     await github.paginate(github.rest.issues.listLabelsOnIssue, {
       owner,
@@ -25,13 +25,9 @@ module.exports = async ({ github, context, core }) => {
   const baseVersionFile = execFileSync('git', ['show', 'HEAD^1:VERSION'], { encoding: 'utf8' });
   const products = Object.keys(parseVersionFile(versionFile));
 
-  const files = await github.paginate(github.rest.pulls.listFiles, {
-    owner,
-    repo,
-    pull_number: pr.number,
-    per_page: 100,
-  });
-  const affected = findAffectedProducts({ labels, products, files, changedFileCount: pr.changed_files });
+  // paths-filter の出力（当たったフィルタの名前の JSON 配列）
+  const matched = JSON.parse(process.env.AFFECTED_PRODUCTS || '[]');
+  const affected = findAffectedProducts({ matched, products, changedFileCount: pr.changed_files });
 
   const refs = await github.paginate(github.rest.git.listMatchingRefs, {
     owner,
