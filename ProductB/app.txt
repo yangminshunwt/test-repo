@@ -1,5 +1,1 @@
-<<<<<<< HEAD
-product-b fix2-1793896576
-=======
 product-b fix-1793902765
->>>>>>> dce46b2 (reg: k2-conflict (#300))
