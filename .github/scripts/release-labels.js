@@ -241,22 +241,23 @@ function findCherryPickTargets({ baseBranch, labels, versionFile, branches }) {
 }
 
 // リリースの準備（開発ルールの「main ブランチにおいて機能の開発は終了しリリース前の準備フェーズに入りたい場合」）で、
-// main の今のバージョンから作るリリースブランチと、次のバージョンのリリースラベルを決める。
-function planReleasePrep({ versionFile, product, nextVersion }) {
+// main の今のバージョンから作るリリースブランチと、次のバージョン（bump は minor か major）とそのリリースラベルを決める。
+function planReleasePrep({ versionFile, product, bump }) {
   const versions = parseVersionFile(versionFile);
   if (!(product in versions)) {
     return { errors: [`製品 ${product} は VERSION ファイルにありません（${Object.keys(versions).join('、')}）。`] };
   }
   const currentVersion = versions[product];
-  const errors = [];
-  if (!parseVersion(nextVersion)) {
-    errors.push(`次のバージョン ${nextVersion} は X.Y.Z の形式ではありません。`);
-  } else if (compareVersions(nextVersion, currentVersion) <= 0) {
-    errors.push(`次のバージョン ${nextVersion} は、main の今のバージョン（${currentVersion}）より新しくしてください。`);
+  const [major, minor] = parseVersion(currentVersion);
+  const nextVersions = { minor: `${major}.${minor + 1}.0`, major: `${major + 1}.0.0` };
+  if (!(bump in nextVersions)) {
+    return { errors: [`上げ方 ${bump} は minor か major にしてください。`] };
   }
+  const nextVersion = nextVersions[bump];
   return {
-    errors,
+    errors: [],
     currentVersion,
+    nextVersion,
     releaseBranch: `release/${product}/v${currentVersion}`,
     nextLabel: `${product}/v${nextVersion}`,
   };

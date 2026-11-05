@@ -12,11 +12,10 @@ async function prepare({ github, context, core }) {
     core.setFailed(`main ブランチで実行してください（今は ${context.ref}）。`);
     return;
   }
-  const product = process.env.PRODUCT.trim();
-  const nextVersion = process.env.NEXT_VERSION.trim();
+  const product = process.env.PRODUCT;
   // チェックアウトされているのは、実行した時点の main（context.sha）
   const versionFile = fs.readFileSync('VERSION', 'utf8');
-  const plan = planReleasePrep({ versionFile, product, nextVersion });
+  const plan = planReleasePrep({ versionFile, product, bump: process.env.BUMP });
   if (plan.errors.length > 0) {
     for (const error of plan.errors) core.error(error);
     core.setFailed('リリースの準備を始められませんでした。');
@@ -38,11 +37,12 @@ async function prepare({ github, context, core }) {
     if (error.status !== 422) throw error;
     results.push(`ラベル ${plan.nextLabel} はすでにあります。`);
   }
-  fs.writeFileSync('VERSION', setVersion(versionFile, product, nextVersion));
+  fs.writeFileSync('VERSION', setVersion(versionFile, product, plan.nextVersion));
 
   for (const result of results) core.info(result);
-  await core.summary.addHeading(`${product} のリリースの準備`, 3).addList(results).write();
+  await core.summary.addHeading(`${product} のリリースの準備（${plan.currentVersion} → ${plan.nextVersion}）`, 3).addList(results).write();
   core.setOutput('current_version', plan.currentVersion);
+  core.setOutput('next_version', plan.nextVersion);
   core.setOutput('release_branch', plan.releaseBranch);
   core.setOutput('next_label', plan.nextLabel);
 }

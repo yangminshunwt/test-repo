@@ -288,21 +288,21 @@ test('cherry-pick：main で、VERSION を上げる前に作った同じバー�
   assert.deepEqual(targets({ labels: ['product-a/v1.4.0'], branches }).targets, ['release/product-a/v1.4.0', 'release/product-a/v1.5.0']);
 });
 
-test('リリース準備：main の今のバージョンのリリースブランチと、次のバージョンのラベルを決める', () => {
-  assert.deepEqual(planReleasePrep({ versionFile: versionFile('1.5.0', '1.4.0'), product: 'product-a', nextVersion: '1.6.0' }), {
+test('リリース準備：main の今のバージョンのリリースブランチと、次のバージョンとそのラベルを決める', () => {
+  assert.deepEqual(planReleasePrep({ versionFile: versionFile('1.5.3', '1.4.0'), product: 'product-a', bump: 'minor' }), {
     errors: [],
-    currentVersion: '1.5.0',
-    releaseBranch: 'release/product-a/v1.5.0',
+    currentVersion: '1.5.3',
+    nextVersion: '1.6.0',
+    releaseBranch: 'release/product-a/v1.5.3',
     nextLabel: 'product-a/v1.6.0',
   });
+  assert.equal(planReleasePrep({ versionFile: versionFile('1.5.3', '1.4.0'), product: 'product-a', bump: 'major' }).nextVersion, '2.0.0');
 });
 
-test('リリース準備：知らない製品、形式の誤ったバージョン、今より古いバージョンは NG', () => {
+test('リリース準備：知らない製品と、minor・major 以外の上げ方は NG', () => {
   const version = versionFile('1.5.0', '1.4.0');
-  assert.match(planReleasePrep({ versionFile: version, product: 'product-c', nextVersion: '1.6.0' }).errors[0], /product-c は VERSION ファイルにありません/);
-  assert.match(planReleasePrep({ versionFile: version, product: 'product-a', nextVersion: 'v1.6.0' }).errors[0], /X\.Y\.Z の形式ではありません/);
-  assert.match(planReleasePrep({ versionFile: version, product: 'product-a', nextVersion: '1.5.0' }).errors[0], /より新しくしてください/);
-  assert.match(planReleasePrep({ versionFile: version, product: 'product-a', nextVersion: '1.4.9' }).errors[0], /より新しくしてください/);
+  assert.match(planReleasePrep({ versionFile: version, product: 'product-c', bump: 'minor' }).errors[0], /product-c は VERSION ファイルにありません/);
+  assert.match(planReleasePrep({ versionFile: version, product: 'product-a', bump: 'patch' }).errors[0], /minor か major/);
 });
 
 test('リリース準備：VERSION ファイルのその製品の行だけを書き換える', () => {
