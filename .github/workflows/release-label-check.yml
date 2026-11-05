@@ -1,0 +1,49 @@
+name: Release label check
+
+on:
+  pull_request:
+    branches:
+      - main
+      - 'release/**'
+    # ラベルの付け外しやマージ先の変更でもチェックし直す
+    types: [opened, synchronize, reopened, edited, labeled, unlabeled]
+
+# concurrency で前の実行を取り消すことはしない。PR の作成とラベルの追加のように続けて起きたイベントで、
+# あとに作られた実行のほうが取り消されると、その結果（取り消し）が必須チェックに使われてマージできなくなるため。
+# どの実行もその時点のラベルを取り直して判定するので、取り消さなくても最後に作られた実行の結果が正しくなる。
+
+permissions:
+  contents: read
+
+jobs:
+  release-label-check:
+    name: release label check
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # マージ前の VERSION を読むため、マージコミットの親まで取る
+          fetch-depth: 2
+          persist-credentials: false
+
+      - name: Find affected products
+        id: products
+        uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
+        with:
+          filters: .github/product-paths.yml
+
+      - name: Check release labels
+        uses: actions/github-script@v9
+        env:
+          AFFECTED_PRODUCTS: ${{ steps.products.outputs.changes }}
+          ALL_FILE_COUNT: ${{ steps.products.outputs.all_count }}
+          LISTED_FILE_COUNT: ${{ steps.products.outputs.listed_count }}
+        with:
+          retries: 3 # GitHub API の一時的なエラー（5xx）はやり直す
+          script: |
+            const run = require('./.github/scripts/release-label-check.js')
+            await run({ github, context, core })
