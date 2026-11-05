@@ -25,9 +25,14 @@ module.exports = async ({ github, context, core }) => {
   const baseVersionFile = execFileSync('git', ['show', 'HEAD^1:VERSION'], { encoding: 'utf8' });
   const products = Object.keys(parseVersionFile(versionFile));
 
-  // paths-filter の出力（当たったフィルタの名前の JSON 配列）
-  const matched = JSON.parse(process.env.AFFECTED_PRODUCTS || '[]');
-  const affected = findAffectedProducts({ matched, products, changedFileCount: pr.changed_files });
+  // paths-filter の出力（当たったフィルタの名前の JSON 配列と、all・listed に当たったファイルの数）
+  const affected = findAffectedProducts({
+    matched: JSON.parse(process.env.AFFECTED_PRODUCTS || '[]'),
+    products,
+    changedFileCount: pr.changed_files,
+    allFileCount: Number.parseInt(process.env.ALL_FILE_COUNT, 10),
+    listedFileCount: Number.parseInt(process.env.LISTED_FILE_COUNT, 10),
+  });
 
   const refs = await github.paginate(github.rest.git.listMatchingRefs, {
     owner,
