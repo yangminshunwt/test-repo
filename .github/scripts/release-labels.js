@@ -199,10 +199,52 @@ function checkReleaseLabels({ baseBranch, labels, affectedProducts, versionFile,
   return { errors, warnings, releaseLabels };
 }
 
+// マージされた PR の変更を cherry-pick するブランチを決める。
+// 製品ごとに、ラベルのバージョン以上、マージ先のバージョンまでのリリースブランチを返す（マージ先自身は除く）。
+// マージ先のバージョンは、main ならマージ後の VERSION、リリースブランチならブランチ名で数える。
+// main と同じバージョンのリリースブランチ（VERSION を上げる前に作ったもの）も行き先に入れる。
+// cherry-pick の PR には行き先のブランチのバージョンのラベルを付けるので、その PR がマージされても先へは広がらない。
+// missing には、ラベルのバージョンのリリースブランチがないもの（リリース後に消したか、まだ作っていない）を返す。
+function findCherryPickTargets({ baseBranch, labels, versionFile, branches }) {
+  const versions = parseVersionFile(versionFile);
+  const products = Object.keys(versions);
+  const { releaseLabels, errors: problems } = extractReleaseLabels(labels, products);
+  const release = baseBranch === 'main' ? null : parseReleaseBranch(baseBranch);
+  if (baseBranch !== 'main' && !release) {
+    problems.push(`マージ先の ${baseBranch} は、main でも release/<製品名>/vX.Y.Z の形式のリリースブランチでもありません。`);
+    return { targets: [], problems, missing: [] };
+  }
+
+  const releaseBranches = branches.map(parseReleaseBranch).filter(Boolean);
+  const targets = [];
+  const missing = [];
+  for (const { label, product, version } of releaseLabels) {
+    // リリースブランチへの PR に付いた他の製品のラベルは、ラベルのチェックで止めているので無視する
+    if (release && product !== release.product) continue;
+    const upper = release ? release.version : versions[product];
+    if (compareVersions(version, upper) > 0) {
+      problems.push(`${label}：マージ先のバージョン（v${upper}）より新しいバージョンです。`);
+      continue;
+    }
+    const productBranches = releaseBranches.filter((branch) => branch.product === product);
+    if (compareVersions(version, upper) < 0 && !productBranches.some((branch) => branch.version === version)) {
+      missing.push({ label, product, version });
+    }
+    const belowUpper = (branchVersion) => (release ? compareVersions(branchVersion, upper) < 0 : compareVersions(branchVersion, upper) <= 0);
+    for (const branch of productBranches) {
+      if (compareVersions(branch.version, version) >= 0 && belowUpper(branch.version)) {
+        targets.push(`release/${branch.product}/v${branch.version}`);
+      }
+    }
+  }
+  return { targets: [...new Set(targets)].sort(), problems, missing };
+}
+
 module.exports = {
   checkReleaseLabels,
   compareVersions,
   findAffectedProducts,
+  findCherryPickTargets,
   parseReleaseBranch,
   parseVersionFile,
 };
