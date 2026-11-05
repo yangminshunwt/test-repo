@@ -1,1 +1,5 @@
+<<<<<<< HEAD
 product-a
+=======
+product-a fixed
+>>>>>>> 1593c62 (test: s2-conflict (#75))
