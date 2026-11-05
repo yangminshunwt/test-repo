@@ -266,6 +266,58 @@ function planReleasePrep({ versionFile, product, bump }) {
   };
 }
 
+<<<<<<< HEAD
+=======
+// 修正フェーズ（開発ルールの「リリース済みのバージョンに対しての修正フェーズに入りたい場合」）で、
+// 製品の最新のリリースタグ（<製品名>/vX.Y.Z。rc などは除く）と、そこから作るリリースブランチ（次のパッチバージョン）を決める。
+function planHotfixPrep({ versionFile, product, tags }) {
+  const products = Object.keys(parseVersionFile(versionFile));
+  if (!products.includes(product)) {
+    return { errors: [`製品 ${product} は VERSION ファイルにありません（${products.join('、')}）。`] };
+  }
+  const prefix = `${product}/v`;
+  const released = tags.filter((tag) => tag.startsWith(prefix) && parseVersion(tag.slice(prefix.length))).map((tag) => tag.slice(prefix.length));
+  if (released.length === 0) {
+    return { errors: [`${product} のリリースタグ（${product}/vX.Y.Z）がまだありません。`] };
+  }
+  const releasedVersion = released.sort(compareVersions).at(-1);
+  const [major, minor, patch] = parseVersion(releasedVersion);
+  const nextVersion = `${major}.${minor}.${patch + 1}`;
+  return {
+    errors: [],
+    releasedTag: `${product}/v${releasedVersion}`,
+    releasedVersion,
+    nextVersion,
+    releaseBranch: `release/${product}/v${nextVersion}`,
+    nextLabel: `${product}/v${nextVersion}`,
+  };
+}
+
+// リリース手順（開発ルールの「リリース手順」）で打つタグを、リリースブランチの名前と今あるタグから決める。
+// rc タグは <製品名>/vX.Y.Z-rc.N（N は 1 から順に）、リリースタグは <製品名>/vX.Y.Z。
+function planRelease({ branch, tags }) {
+  const release = parseReleaseBranch(branch);
+  if (!release) {
+    return { errors: [`${branch} はリリースブランチ（release/<製品名>/vX.Y.Z）ではありません。Use workflow from でリリースブランチを選んで実行してください。`] };
+  }
+  const releaseTag = `${release.product}/v${release.version}`;
+  const rcNumbers = tags
+    .map((tag) => (tag.startsWith(`${releaseTag}-rc.`) ? tag.slice(`${releaseTag}-rc.`.length) : ''))
+    .filter((n) => /^[1-9]\d*$/.test(n))
+    .map(Number);
+  const latestRc = rcNumbers.length > 0 ? Math.max(...rcNumbers) : null;
+  return {
+    errors: [],
+    product: release.product,
+    version: release.version,
+    releaseTag,
+    released: tags.includes(releaseTag),
+    latestRcTag: latestRc === null ? null : `${releaseTag}-rc.${latestRc}`,
+    nextRcTag: `${releaseTag}-rc.${(latestRc ?? 0) + 1}`,
+  };
+}
+
+>>>>>>> b61ef7e (Add release workflow and let the App create release tags and delete release branches (#121))
 // VERSION ファイルの、その製品の行だけを書き換える（コメントやほかの行はそのまま）。
 function setVersion(versionFile, product, version) {
   let found = false;
@@ -282,10 +334,16 @@ function setVersion(versionFile, product, version) {
 module.exports = {
   checkReleaseLabels,
   compareVersions,
+  extractReleaseLabels,
   findAffectedProducts,
   findCherryPickTargets,
   parseReleaseBranch,
   parseVersionFile,
+<<<<<<< HEAD
+=======
+  planHotfixPrep,
+  planRelease,
+>>>>>>> b61ef7e (Add release workflow and let the App create release tags and delete release branches (#121))
   planReleasePrep,
   setVersion,
 };
