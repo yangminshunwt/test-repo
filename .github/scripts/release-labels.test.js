@@ -186,32 +186,17 @@ test('修正フェーズ：VERSION を上げるまでは、新しいバージョ
   assertError(check({ ...bump, labels: ['product-a/v1.3.0'], version: versionFile('1.3.0', '1.2.0') }), /一致しません/);
 });
 
-test('影響する製品：labeler が付けた製品のラベルを使う', () => {
+test('影響する製品：paths-filter が当てたフィルタのうち、VERSION にある製品だけを使う', () => {
   const products = ['product-a', 'product-b'];
-  const files = [{ filename: 'ProductA/app.txt', status: 'modified' }];
-  assert.deepEqual(findAffectedProducts({ labels: ['product-a', 'bug'], products, files, changedFileCount: 1 }).products, ['product-a']);
-});
-
-test('影響する製品：同じディレクトリ内の名前の変更なら labeler の結果のまま', () => {
-  const products = ['product-a', 'product-b'];
-  const files = [{ filename: 'ProductA/new.txt', previous_filename: 'ProductA/old.txt', status: 'renamed' }];
-  const result = findAffectedProducts({ labels: ['product-a'], products, files, changedFileCount: 1 });
+  const result = findAffectedProducts({ matched: ['product-a', 'docs'], products, changedFileCount: 1 });
   assert.deepEqual(result.products, ['product-a']);
   assert.equal(result.reason, null);
 });
 
-test('影響する製品：ディレクトリをまたぐ移動があれば、すべての製品に影響するとみなす', () => {
-  const products = ['product-a', 'product-b'];
-  const files = [{ filename: 'ProductA/common.txt', previous_filename: 'Shared/common.txt', status: 'renamed' }];
-  const result = findAffectedProducts({ labels: ['product-a'], products, files, changedFileCount: 1 });
-  assert.deepEqual(result.products, products);
-  assert.match(result.reason, /Shared\/common\.txt → ProductA\/common\.txt/);
-});
-
 test('影響する製品：変更ファイルが 3000 件を超えれば、すべての製品に影響するとみなす', () => {
   const products = ['product-a', 'product-b'];
-  assert.deepEqual(findAffectedProducts({ labels: ['product-a'], products, files: [], changedFileCount: 3001 }).products, products);
-  assert.deepEqual(findAffectedProducts({ labels: ['product-a'], products, files: [], changedFileCount: 3000 }).products, ['product-a']);
+  assert.deepEqual(findAffectedProducts({ matched: ['product-a'], products, changedFileCount: 3001 }).products, products);
+  assert.deepEqual(findAffectedProducts({ matched: ['product-a'], products, changedFileCount: 3000 }).products, ['product-a']);
 });
 
 test('マージ先が main でもリリースブランチでもなければ NG', () => {
