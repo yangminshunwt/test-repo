@@ -26,3 +26,13 @@ jobs:
           persist-credentials: false
       - name: Run tests
         run: test ! -e ProductB/FAIL
+
+  script-test:
+    name: script test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Run tests
+        run: node --test .github/scripts/release-labels.test.js .github/scripts/products.test.js
