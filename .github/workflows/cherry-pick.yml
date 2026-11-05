@@ -40,6 +40,7 @@ jobs:
         env:
           PR_NUMBER: ${{ inputs.pr_number || github.event.pull_request.number }}
         with:
+          retries: 3 # GitHub API の一時的なエラー（5xx）はやり直す
           script: |
             const { findTargets } = require('./.github/scripts/cherry-pick.js')
             await findTargets({ github, context, core })
@@ -83,6 +84,7 @@ jobs:
         name: Select targets without cherry-pick pull requests
         uses: actions/github-script@v9
         with:
+          retries: 3 # GitHub API の一時的なエラー（5xx）はやり直す
           github-token: ${{ steps.app-token.outputs.token }}
           script: |
             const { selectPending } = require('./.github/scripts/cherry-pick.js')
@@ -112,6 +114,7 @@ jobs:
         if: ${{ !cancelled() && steps.app-token.outcome == 'success' }}
         uses: actions/github-script@v9
         with:
+          retries: 3 # GitHub API の一時的なエラー（5xx）はやり直す
           github-token: ${{ steps.app-token.outputs.token }}
           script: |
             const { labelPullRequests } = require('./.github/scripts/cherry-pick.js')
@@ -128,6 +131,7 @@ jobs:
           RESULTS: ${{ steps.backport.outputs.was_successful_by_target }}
           LABEL_OUTCOME: ${{ steps.label.outcome }}
         with:
+          retries: 3 # GitHub API の一時的なエラー（5xx）はやり直す
           script: |
             const { reportFailures } = require('./.github/scripts/cherry-pick.js')
             await reportFailures({ github, context, core })

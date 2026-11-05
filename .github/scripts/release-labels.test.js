@@ -199,6 +199,10 @@ test('リリースブランチ：マージ後の VERSION がブランチ名と�
   };
   assertError(check({ ...wrongBase, labels: ['product-a/v1.4.0'] }), /ブランチのバージョン（v1\.3\.0）と一致しません/);
   assertError(check({ ...wrongBase, labels: ['product-a/v1.3.0'] }), /ブランチのバージョン（v1\.3\.0）と一致しません/);
+  // ラベルは、マージ後の VERSION ではなくブランチのバージョンを超えたことを知らせる（「ブランチがありません」とは言わない）
+  const result = check({ ...wrongBase, labels: ['product-a/v1.4.0'] });
+  assertError(result, /マージ先のブランチのバージョン（v1\.3\.0）より新しいバージョンです/);
+  assert.ok(!result.errors.some((error) => /ブランチがありません/.test(error)), JSON.stringify(result.errors));
 });
 
 test('修正フェーズ：VERSION を上げるまでは、新しいバージョンのラベルは付けられない', () => {

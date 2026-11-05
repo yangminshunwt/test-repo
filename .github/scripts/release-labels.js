@@ -197,6 +197,9 @@ function checkReleaseLabels({ baseBranch, labels, affectedProducts, versionFile,
       errors.push(`${label}：リリース済みのラベル（アーカイブ済み）です。これから入るリリースのバージョンを付けてください。`);
     } else if (compareVersions(version, versions[product]) > 0) {
       errors.push(`${label}：マージ後の VERSION（${product}/${versions[product]}）より新しいバージョンです。`);
+    } else if (release && compareVersions(version, release.version) > 0) {
+      // 別のブランチ（main など）から切った作業ブランチで、マージ後の VERSION がブランチ名より新しくなっているとき
+      errors.push(`${label}：マージ先のブランチのバージョン（v${release.version}）より新しいバージョンです。`);
     } else if (!knownVersions.get(product).has(version)) {
       errors.push(`${label}：${product} に v${version} のブランチがありません。main の VERSION か、今あるリリースブランチのバージョンを付けてください。`);
     }

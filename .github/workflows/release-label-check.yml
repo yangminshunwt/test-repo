@@ -43,6 +43,7 @@ jobs:
           ALL_FILE_COUNT: ${{ steps.products.outputs.all_count }}
           LISTED_FILE_COUNT: ${{ steps.products.outputs.listed_count }}
         with:
+          retries: 3 # GitHub API の一時的なエラー（5xx）はやり直す
           script: |
             const run = require('./.github/scripts/release-label-check.js')
             await run({ github, context, core })
