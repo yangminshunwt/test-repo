@@ -7,3 +7,4 @@
 - `Shared/`：両方の製品で使うコード
 
 `ProductA/FAIL` または `ProductB/FAIL` があると、その製品のテストが失敗する。
+change
