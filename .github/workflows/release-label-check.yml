@@ -37,6 +37,14 @@ jobs:
             const pull_number = context.payload.pull_request.number;
             for (let attempt = 0; attempt < 30; attempt++) {
               const { data: pr } = await github.rest.pulls.get({ ...repo, pull_number });
+              if (pr.state !== 'open') {
+                // 閉じた PR（マージ後にラベルを直したときなど）はマージコミットが作り直されないので待たない。
+                // マージ済みなら、実際にマージしたコミットで判定する
+                core.setOutput('sha', pr.merged ? pr.merge_commit_sha : context.sha);
+                core.setOutput('base_ref', pr.base.ref);
+                core.setOutput('changed_files', pr.changed_files);
+                return;
+              }
               if (pr.mergeable === false) {
                 core.setFailed(`${pr.base.ref} とコンフリクトしています。解消して push すると、もう一度チェックします。`);
                 return;
