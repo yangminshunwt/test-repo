@@ -163,11 +163,14 @@ function checkReleaseLabels({ baseBranch, labels, affectedProducts, versionFile,
   }
 
   // VERSION を変える PR では、バージョンは上げるだけで、ラベルは上げた後のバージョンにする。
+  // main で上げるときは、上げる前のバージョンのリリースブランチを先に作っておく（開発フェーズの入り方の順番）。
   for (const product of bumpedProducts) {
     if (release && product !== release.product) continue;
     const [before, after] = [baseVersions[product], versions[product]];
     if (before !== undefined && compareVersions(after, before) < 0) {
       errors.push(`VERSION の ${product} を ${before} から ${after} に下げています。`);
+    } else if (!release && before !== undefined && !branches.includes(`release/${product}/v${before}`)) {
+      errors.push(`VERSION の ${product} を上げる前に、release/${product}/v${before} を作ってください（Actions の「Release prep」を使うと順番どおりに進みます）。`);
     }
     for (const { label, version } of labelsByProduct.get(product) ?? []) {
       if (version !== after) {
@@ -240,6 +243,67 @@ function findCherryPickTargets({ baseBranch, labels, versionFile, branches }) {
   return { targets: [...new Set(targets)].sort(), problems, missing };
 }
 
+// リリースの準備（開発ルールの「main ブランチにおいて機能の開発は終了しリリース前の準備フェーズに入りたい場合」）で、
+// main の今のバージョンから作るリリースブランチと、次のバージョン（bump は minor か major）とそのリリースラベルを決める。
+function planReleasePrep({ versionFile, product, bump }) {
+  const versions = parseVersionFile(versionFile);
+  if (!(product in versions)) {
+    return { errors: [`製品 ${product} は VERSION ファイルにありません（${Object.keys(versions).join('、')}）。`] };
+  }
+  const currentVersion = versions[product];
+  const [major, minor] = parseVersion(currentVersion);
+  const nextVersions = { minor: `${major}.${minor + 1}.0`, major: `${major + 1}.0.0` };
+  if (!(bump in nextVersions)) {
+    return { errors: [`上げ方 ${bump} は minor か major にしてください。`] };
+  }
+  const nextVersion = nextVersions[bump];
+  return {
+    errors: [],
+    currentVersion,
+    nextVersion,
+    releaseBranch: `release/${product}/v${currentVersion}`,
+    nextLabel: `${product}/v${nextVersion}`,
+  };
+}
+
+// 修正フェーズ（開発ルールの「リリース済みのバージョンに対しての修正フェーズに入りたい場合」）で、
+// 製品の最新のリリースタグ（<製品名>/vX.Y.Z。rc などは除く）と、そこから作るリリースブランチ（次のパッチバージョン）を決める。
+function planHotfixPrep({ versionFile, product, tags }) {
+  const products = Object.keys(parseVersionFile(versionFile));
+  if (!products.includes(product)) {
+    return { errors: [`製品 ${product} は VERSION ファイルにありません（${products.join('、')}）。`] };
+  }
+  const prefix = `${product}/v`;
+  const released = tags.filter((tag) => tag.startsWith(prefix) && parseVersion(tag.slice(prefix.length))).map((tag) => tag.slice(prefix.length));
+  if (released.length === 0) {
+    return { errors: [`${product} のリリースタグ（${product}/vX.Y.Z）がまだありません。`] };
+  }
+  const releasedVersion = released.sort(compareVersions).at(-1);
+  const [major, minor, patch] = parseVersion(releasedVersion);
+  const nextVersion = `${major}.${minor}.${patch + 1}`;
+  return {
+    errors: [],
+    releasedTag: `${product}/v${releasedVersion}`,
+    releasedVersion,
+    nextVersion,
+    releaseBranch: `release/${product}/v${nextVersion}`,
+    nextLabel: `${product}/v${nextVersion}`,
+  };
+}
+
+// VERSION ファイルの、その製品の行だけを書き換える（コメントやほかの行はそのまま）。
+function setVersion(versionFile, product, version) {
+  let found = false;
+  const lines = versionFile.split('\n').map((line) => {
+    const trimmed = line.trim();
+    if (trimmed === '' || trimmed.startsWith('#') || trimmed.split('/')[0] !== product) return line;
+    found = true;
+    return `${product}/${version}`;
+  });
+  if (!found) throw new Error(`VERSION ファイルに ${product} がありません`);
+  return lines.join('\n');
+}
+
 module.exports = {
   checkReleaseLabels,
   compareVersions,
@@ -247,4 +311,7 @@ module.exports = {
   findCherryPickTargets,
   parseReleaseBranch,
   parseVersionFile,
+  planHotfixPrep,
+  planReleasePrep,
+  setVersion,
 };

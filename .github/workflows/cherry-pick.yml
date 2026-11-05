@@ -26,8 +26,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      issues: write # 行き先を決められないときに元の PR へコメントする
-      pull-requests: read
+      pull-requests: write # 行き先を決められないときに元の PR へコメントする（PR へのコメントには pull-requests の権限が要る）
     outputs:
       pr_number: ${{ steps.targets.outputs.pr_number }}
       all_branches: ${{ steps.targets.outputs.all_branches }}
@@ -52,8 +51,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      issues: write # 失敗を元の PR へコメントする（App のトークンを作れなかったときも知らせるため GITHUB_TOKEN で）
-      pull-requests: read
+      pull-requests: write # 失敗を元の PR へコメントする（App のトークンを作れなかったときも知らせるため GITHUB_TOKEN で）
     env:
       PR_NUMBER: ${{ needs.targets.outputs.pr_number }}
       TARGETS: ${{ needs.targets.outputs.all_branches }}
