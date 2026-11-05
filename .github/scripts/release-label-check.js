@@ -9,6 +9,9 @@ const { checkReleaseLabels, findAffectedProducts, parseVersionFile } = require('
 module.exports = async ({ github, context, core }) => {
   const { owner, repo } = context.repo;
   const pr = context.payload.pull_request;
+  // イベントの後にマージ先が変わっていても今のマージ先で判定するため、チェックアウトの前に取り直した値を使う
+  const baseBranch = process.env.BASE_REF || pr.base.ref;
+  const changedFileCount = process.env.CHANGED_FILES ? Number(process.env.CHANGED_FILES) : pr.changed_files;
 
   // イベントの後に付け外しされたラベルも含めるため、今のラベルを取り直す。
   const labelObjects = await github.paginate(github.rest.issues.listLabelsOnIssue, {
@@ -35,7 +38,7 @@ module.exports = async ({ github, context, core }) => {
   const affected = findAffectedProducts({
     matched: JSON.parse(process.env.AFFECTED_PRODUCTS || '[]'),
     products,
-    changedFileCount: pr.changed_files,
+    changedFileCount,
     allFileCount: Number.parseInt(process.env.ALL_FILE_COUNT, 10),
     listedFileCount: Number.parseInt(process.env.LISTED_FILE_COUNT, 10),
   });
@@ -49,7 +52,7 @@ module.exports = async ({ github, context, core }) => {
   const branches = refs.map((ref) => ref.ref.replace(/^refs\/heads\//, ''));
 
   const { errors, warnings } = checkReleaseLabels({
-    baseBranch: pr.base.ref,
+    baseBranch,
     labels,
     affectedProducts: affected.products,
     versionFile,
@@ -63,7 +66,7 @@ module.exports = async ({ github, context, core }) => {
     .addHeading('リリースラベルのチェック', 3)
     .addTable([
       [{ data: '項目', header: true }, { data: '内容', header: true }],
-      ['マージ先', pr.base.ref],
+      ['マージ先', baseBranch],
       ['影響する製品', affected.products.join('、') || '（なし）'],
       ['ラベル', labels.join('、') || '（なし）'],
       ['結果', errors.length === 0 ? 'OK' : `NG（${errors.length} 件）`],
