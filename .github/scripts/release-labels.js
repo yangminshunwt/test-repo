@@ -163,11 +163,14 @@ function checkReleaseLabels({ baseBranch, labels, affectedProducts, versionFile,
   }
 
   // VERSION を変える PR では、バージョンは上げるだけで、ラベルは上げた後のバージョンにする。
+  // main で上げるときは、上げる前のバージョンのリリースブランチを先に作っておく（開発フェーズの入り方の順番）。
   for (const product of bumpedProducts) {
     if (release && product !== release.product) continue;
     const [before, after] = [baseVersions[product], versions[product]];
     if (before !== undefined && compareVersions(after, before) < 0) {
       errors.push(`VERSION の ${product} を ${before} から ${after} に下げています。`);
+    } else if (!release && before !== undefined && !branches.includes(`release/${product}/v${before}`)) {
+      errors.push(`VERSION の ${product} を上げる前に、release/${product}/v${before} を作ってください（Actions の「Release prep」を使うと順番どおりに進みます）。`);
     }
     for (const { label, version } of labelsByProduct.get(product) ?? []) {
       if (version !== after) {
@@ -241,22 +244,23 @@ function findCherryPickTargets({ baseBranch, labels, versionFile, branches }) {
 }
 
 // リリースの準備（開発ルールの「main ブランチにおいて機能の開発は終了しリリース前の準備フェーズに入りたい場合」）で、
-// main の今のバージョンから作るリリースブランチと、次のバージョンのリリースラベルを決める。
-function planReleasePrep({ versionFile, product, nextVersion }) {
+// main の今のバージョンから作るリリースブランチと、次のバージョン（bump は minor か major）とそのリリースラベルを決める。
+function planReleasePrep({ versionFile, product, bump }) {
   const versions = parseVersionFile(versionFile);
   if (!(product in versions)) {
     return { errors: [`製品 ${product} は VERSION ファイルにありません（${Object.keys(versions).join('、')}）。`] };
   }
   const currentVersion = versions[product];
-  const errors = [];
-  if (!parseVersion(nextVersion)) {
-    errors.push(`次のバージョン ${nextVersion} は X.Y.Z の形式ではありません。`);
-  } else if (compareVersions(nextVersion, currentVersion) <= 0) {
-    errors.push(`次のバージョン ${nextVersion} は、main の今のバージョン（${currentVersion}）より新しくしてください。`);
+  const [major, minor] = parseVersion(currentVersion);
+  const nextVersions = { minor: `${major}.${minor + 1}.0`, major: `${major + 1}.0.0` };
+  if (!(bump in nextVersions)) {
+    return { errors: [`上げ方 ${bump} は minor か major にしてください。`] };
   }
+  const nextVersion = nextVersions[bump];
   return {
-    errors,
+    errors: [],
     currentVersion,
+    nextVersion,
     releaseBranch: `release/${product}/v${currentVersion}`,
     nextLabel: `${product}/v${nextVersion}`,
   };
