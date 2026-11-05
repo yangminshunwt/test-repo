@@ -3,7 +3,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const { createReleaseBranch, createReleaseLabel } = require('./release-branch.js');
+const { createReleaseBranch, createReleaseLabel, tagCommit } = require('./release-branch.js');
 const { parseVersionFile, planHotfixPrep, setVersion } = require('./release-labels.js');
 
 async function readVersionFile(github, repo, ref) {
@@ -24,15 +24,6 @@ async function branchExists(github, repo, branch) {
     if (error.status === 404) return false;
     throw error;
   }
-}
-
-// タグが指すコミットを返す（注釈付きタグが入れ子になっていても、コミットまでたどる）
-async function tagCommit(github, repo, ref) {
-  let { type, sha } = ref.object;
-  while (type === 'tag') {
-    ({ type, sha } = (await github.rest.git.getTag({ ...repo, tag_sha: sha })).data.object);
-  }
-  return sha;
 }
 
 // 最新のリリースタグから次のパッチバージョンのリリースブランチを作り、そのリリースラベルを作る。
