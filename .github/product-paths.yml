@@ -3,24 +3,24 @@
 # 複数の製品で共有するパスは、使う製品すべてに書く。
 # どこにも書かれていないパスの変更は、すべての製品に影響するとみなす。
 
-# すべての製品で共有するパス
-all-products: &all-products
+# すべての製品に共通するパス
+common: &common
   - 'Shared/**'
   - '.github/**'
 
 product-a: &product-a
-  - *all-products
+  - *common
   - 'ProductA/**'
   - 'SharedAB/**'
   - 'SharedAC/**'
 
 product-b: &product-b
-  - *all-products
+  - *common
   - 'ProductB/**'
   - 'SharedAB/**'
 
 product-c: &product-c
-  - *all-products
+  - *common
   - 'ProductC/**'
   - 'SharedAC/**'
 
