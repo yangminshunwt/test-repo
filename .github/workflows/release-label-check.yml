@@ -1,0 +1,43 @@
+name: Release label check
+
+on:
+  pull_request:
+    branches:
+      - main
+      - 'release/**'
+    # ラベルの付け外しやマージ先の変更でもチェックし直す
+    types: [opened, synchronize, reopened, edited, labeled, unlabeled]
+
+concurrency:
+  group: release-label-check-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  release-label-check:
+    name: release label check
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: read
+      pull-requests: write # labeler が製品のラベルを付け外しする
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # マージ前の VERSION を読むため、マージコミットの親まで取る
+          fetch-depth: 2
+          persist-credentials: false
+
+      - name: Label affected products
+        uses: actions/labeler@v7
+        with:
+          sync-labels: true
+
+      - name: Check release labels
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const run = require('./.github/scripts/release-label-check.js')
+            await run({ github, context, core })
