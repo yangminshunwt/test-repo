@@ -1,0 +1,112 @@
+name: Hotfix prep
+
+# リリース済みのバージョンに対する修正フェーズに入る（開発ルールの「開発フェーズの入り方」）。
+# その製品の最新のリリースタグから次のパッチバージョンのリリースブランチを作り、リリースラベルを作ってから、
+# そのリリースブランチの VERSION を上げる PR を出す。
+on:
+  workflow_dispatch:
+    inputs:
+      product:
+        description: 製品
+        required: true
+        type: choice
+        # VERSION ファイルの製品名と同じにする（script test で確かめている）
+        options: [product-a, product-b, product-c]
+
+permissions:
+  contents: read
+
+# 同じ製品の実行は順番に処理する（ほかの製品は並行して動いてよい）
+concurrency:
+  group: hotfix-prep-${{ inputs.product }}
+  cancel-in-progress: false
+
+jobs:
+  hotfix-prep:
+    name: hotfix prep
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+          persist-credentials: false
+
+      # GITHUB_TOKEN で作った PR ではチェックが走らないので、GitHub App のトークンを使う
+      - id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ vars.CHERRY_PICK_APP_CLIENT_ID }}
+          private-key: ${{ secrets.CHERRY_PICK_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-issues: write # リリースラベルを作る
+          permission-pull-requests: write
+          permission-workflows: write # リリースブランチの .github を main にそろえるとき
+
+      - id: prepare
+        uses: actions/github-script@v9
+        env:
+          PRODUCT: ${{ inputs.product }}
+        with:
+          retries: 3 # GitHub API の一時的なエラー（5xx）はやり直す
+          github-token: ${{ steps.app-token.outputs.token }}
+          script: |
+            const { prepare } = require('./.github/scripts/hotfix-prep.js')
+            await prepare({ github, context, core })
+
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ steps.prepare.outputs.release_branch }}
+          path: release-work
+          persist-credentials: false
+
+      # リリースブランチの .github（自動化）が main と違えば、main にそろえる。
+      # 古いタグの自動化のままだと、必須チェックが走らなかったり、直した不具合が残っていたりするため。
+      - id: automation
+        name: Align automation with main
+        run: |
+          if diff -rq .github release-work/.github >/dev/null 2>&1; then
+            echo "aligned=false" >> "$GITHUB_OUTPUT"
+          else
+            rm -rf release-work/.github && cp -R .github release-work/.github
+            echo "aligned=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Bump VERSION
+        uses: actions/github-script@v9
+        env:
+          RELEASE_WORK: release-work
+          PRODUCT: ${{ inputs.product }}
+          NEXT_VERSION: ${{ steps.prepare.outputs.next_version }}
+        with:
+          retries: 3 # GitHub API の一時的なエラー（5xx）はやり直す
+          script: |
+            const { bumpVersion } = require('./.github/scripts/hotfix-prep.js')
+            await bumpVersion()
+
+      - id: pull-request
+        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          path: release-work
+          base: ${{ steps.prepare.outputs.release_branch }}
+          branch: hotfix-prep/${{ inputs.product }}/v${{ steps.prepare.outputs.next_version }}
+          delete-branch: true
+          add-paths: VERSION,.github
+          commit-message: Bump ${{ inputs.product }} to ${{ steps.prepare.outputs.next_version }}
+          title: Bump ${{ inputs.product }} to ${{ steps.prepare.outputs.next_version }}
+          labels: ${{ steps.prepare.outputs.next_label }}
+          body: |
+            `${{ steps.prepare.outputs.release_branch }}`（${{ steps.prepare.outputs.released_tag }} から作ったリリースブランチ）の ${{ inputs.product }} の VERSION を ${{ steps.prepare.outputs.next_version }} に上げる PR です（Hotfix prep のワークフローが作りました）。
+
+            この PR がマージされるまで、このリリースブランチへの PR はラベルのチェックで止まるので、早めにマージしてください。
+
+            ${{ steps.prepare.outputs.notes }}
+            ${{ steps.automation.outputs.aligned == 'true' && '- リリースブランチの `.github`（自動化）を main にそろえています。main の CI がこのリリースのコードで通るかを確かめてください。' || '' }}
+
+            この PR に手でコミットを足した場合、Hotfix prep をもう一度実行すると、そのコミットは消えます。
+
+      - name: Summary
+        env:
+          PR_URL: ${{ steps.pull-request.outputs.pull-request-url }}
+          OPERATION: ${{ steps.pull-request.outputs.pull-request-operation }}
+        run: echo "- VERSION を上げる PR（${OPERATION}）：${PR_URL}" >> "$GITHUB_STEP_SUMMARY"
