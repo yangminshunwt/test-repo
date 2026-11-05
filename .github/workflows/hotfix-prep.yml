@@ -47,6 +47,7 @@ jobs:
         env:
           PRODUCT: ${{ inputs.product }}
         with:
+          retries: 3 # GitHub API の一時的なエラー（5xx）はやり直す
           github-token: ${{ steps.app-token.outputs.token }}
           script: |
             const { prepare } = require('./.github/scripts/hotfix-prep.js')
@@ -77,6 +78,7 @@ jobs:
           PRODUCT: ${{ inputs.product }}
           NEXT_VERSION: ${{ steps.prepare.outputs.next_version }}
         with:
+          retries: 3 # GitHub API の一時的なエラー（5xx）はやり直す
           script: |
             const { bumpVersion } = require('./.github/scripts/hotfix-prep.js')
             await bumpVersion()

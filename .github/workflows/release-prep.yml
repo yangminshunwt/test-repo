@@ -58,6 +58,7 @@ jobs:
           PRODUCT: ${{ inputs.product }}
           BUMP: ${{ inputs.bump }}
         with:
+          retries: 3 # GitHub API の一時的なエラー（5xx）はやり直す
           github-token: ${{ steps.app-token.outputs.token }}
           script: |
             const { prepare } = require('./.github/scripts/release-prep.js')
@@ -68,6 +69,7 @@ jobs:
         env:
           CREATED_FROM: ${{ steps.prepare.outputs.created_from }}
         with:
+          retries: 3 # GitHub API の一時的なエラー（5xx）はやり直す
           script: |
             const { catchUpCherryPicks } = require('./.github/scripts/release-prep.js')
             await catchUpCherryPicks({ github, context, core })
