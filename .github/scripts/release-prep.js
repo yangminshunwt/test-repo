@@ -52,7 +52,12 @@ async function prepare({ github, context, core }) {
     createdFrom = sha;
     results.push(`${plan.releaseBranch} を作りました（${sha.slice(0, 7)} から）。`);
   } catch (error) {
-    await ensureExists(error, () => github.rest.git.getRef({ ...repo, ref: `heads/${plan.releaseBranch}` }));
+    try {
+      await ensureExists(error, () => github.rest.git.getRef({ ...repo, ref: `heads/${plan.releaseBranch}` }));
+    } catch (createError) {
+      core.setFailed(`${plan.releaseBranch} を作れませんでした（${createError.message}）。ルールセットや App の権限を確かめてください。`);
+      return;
+    }
     results.push(`${plan.releaseBranch} はすでにあるので、そのまま使います。`);
     // 前に作ったブランチを使うときは、入っていない変更がないかを知らせる
     const cherryPicks = (await github.paginate(github.rest.pulls.list, { ...repo, state: 'all', base: plan.releaseBranch, per_page: 100 })).filter(

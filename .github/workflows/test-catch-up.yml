@@ -1,0 +1,32 @@
+name: Test catch-up (temporary)
+
+# release-prep.js の catchUpCherryPicks だけを動かす試験用のワークフロー。確認が終わったら消す。
+on:
+  workflow_dispatch:
+    inputs:
+      created_from:
+        description: リリースブランチを作ったことにするコミット
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  catch-up:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: write
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/github-script@v9
+        env:
+          CREATED_FROM: ${{ inputs.created_from }}
+        with:
+          script: |
+            const { catchUpCherryPicks } = require('./.github/scripts/release-prep.js')
+            await catchUpCherryPicks({ github, context, core })
