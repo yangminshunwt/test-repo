@@ -78,13 +78,19 @@ async function findTargets({ github, context, core }) {
     .addList(problems)
     .write();
 
+  // コメントに失敗しても、決められた行き先への cherry-pick は続けられるよう、先に出力する
+  core.setOutput('pr_number', prNumber);
+  core.setOutput('all_branches', targets.join(' '));
+
   if (problems.length > 0) {
     for (const problem of problems) core.warning(problem);
     const body = ['cherry-pick 先を決めるときに、次の問題がありました。', '', ...problems.map((problem) => `- ${problem}`), '', manualGuide(prNumber)].join('\n');
-    await commentOnce(github, repo, prNumber, body);
+    try {
+      await commentOnce(github, repo, prNumber, body);
+    } catch (error) {
+      core.warning(`#${prNumber} にコメントできませんでした：${error.message}`);
+    }
   }
-  core.setOutput('pr_number', prNumber);
-  core.setOutput('all_branches', targets.join(' '));
 }
 
 // TARGETS のうち、まだ cherry-pick の PR がない行き先を branches（スペース区切り）に出力する。
