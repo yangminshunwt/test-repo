@@ -1,0 +1,17 @@
+# 変更が影響する製品を判定する（release-label-check.yml の dorny/paths-filter が使う）。
+# フィルタ名は VERSION ファイルの製品名と同じにする。
+# 製品のディレクトリ以外の変更は共有扱いで、両方の製品に影響するとみなす。
+# ただし、どの製品にも影響しないファイル（VERSION、README.md、docs/）は除く。
+product-a:
+  - '**'
+  - '!ProductB/**'
+  - '!VERSION'
+  - '!README.md'
+  - '!docs/**'
+
+product-b:
+  - '**'
+  - '!ProductA/**'
+  - '!VERSION'
+  - '!README.md'
+  - '!docs/**'
