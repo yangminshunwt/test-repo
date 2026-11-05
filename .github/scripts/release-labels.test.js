@@ -9,6 +9,7 @@ const {
   findCherryPickTargets,
   parseReleaseBranch,
   parseVersionFile,
+  planHotfixPrep,
   planReleasePrep,
   setVersion,
 } = require('./release-labels.js');
@@ -324,4 +325,22 @@ test('リリース準備：VERSION ファイルのその製品の行だけを書
   assert.equal(setVersion(versionFile('1.5.0', '1.4.0'), 'product-a', '1.6.0'), versionFile('1.6.0', '1.4.0'));
   assert.equal(setVersion(versionFile('1.5.0', '1.4.0'), 'product-b', '1.5.0'), versionFile('1.5.0', '1.5.0'));
   assert.throws(() => setVersion(versionFile('1.5.0', '1.4.0'), 'product-c', '1.0.0'));
+});
+
+test('修正フェーズ：最新のリリースタグから、次のパッチバージョンのリリースブランチを作る', () => {
+  const tags = ['product-a/v1.2.0', 'product-a/v1.10.0-rc.1', 'product-a/v1.9.3', 'product-a/v1.10.0-rc.2', 'product-b/v2.0.0', 'product-a/v1.3.0'];
+  assert.deepEqual(planHotfixPrep({ versionFile: versionFile('1.11.0', '2.1.0'), product: 'product-a', tags }), {
+    errors: [],
+    releasedTag: 'product-a/v1.9.3',
+    releasedVersion: '1.9.3',
+    nextVersion: '1.9.4',
+    releaseBranch: 'release/product-a/v1.9.4',
+    nextLabel: 'product-a/v1.9.4',
+  });
+});
+
+test('修正フェーズ：知らない製品や、リリースタグがまだない製品は NG', () => {
+  const version = versionFile('1.5.0', '1.4.0');
+  assert.match(planHotfixPrep({ versionFile: version, product: 'product-c', tags: [] }).errors[0], /product-c は VERSION ファイルにありません/);
+  assert.match(planHotfixPrep({ versionFile: version, product: 'product-b', tags: ['product-a/v1.0.0', 'product-b/v1.0.0-rc.1'] }).errors[0], /リリースタグ/);
 });

@@ -266,6 +266,31 @@ function planReleasePrep({ versionFile, product, bump }) {
   };
 }
 
+// 修正フェーズ（開発ルールの「リリース済みのバージョンに対しての修正フェーズに入りたい場合」）で、
+// 製品の最新のリリースタグ（<製品名>/vX.Y.Z。rc などは除く）と、そこから作るリリースブランチ（次のパッチバージョン）を決める。
+function planHotfixPrep({ versionFile, product, tags }) {
+  const products = Object.keys(parseVersionFile(versionFile));
+  if (!products.includes(product)) {
+    return { errors: [`製品 ${product} は VERSION ファイルにありません（${products.join('、')}）。`] };
+  }
+  const prefix = `${product}/v`;
+  const released = tags.filter((tag) => tag.startsWith(prefix) && parseVersion(tag.slice(prefix.length))).map((tag) => tag.slice(prefix.length));
+  if (released.length === 0) {
+    return { errors: [`${product} のリリースタグ（${product}/vX.Y.Z）がまだありません。`] };
+  }
+  const releasedVersion = released.sort(compareVersions).at(-1);
+  const [major, minor, patch] = parseVersion(releasedVersion);
+  const nextVersion = `${major}.${minor}.${patch + 1}`;
+  return {
+    errors: [],
+    releasedTag: `${product}/v${releasedVersion}`,
+    releasedVersion,
+    nextVersion,
+    releaseBranch: `release/${product}/v${nextVersion}`,
+    nextLabel: `${product}/v${nextVersion}`,
+  };
+}
+
 // VERSION ファイルの、その製品の行だけを書き換える（コメントやほかの行はそのまま）。
 function setVersion(versionFile, product, version) {
   let found = false;
@@ -286,6 +311,7 @@ module.exports = {
   findCherryPickTargets,
   parseReleaseBranch,
   parseVersionFile,
+  planHotfixPrep,
   planReleasePrep,
   setVersion,
 };
