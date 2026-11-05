@@ -367,3 +367,17 @@ test('リリース手順：rc タグは 1 から順に、リリースタグは�
 test('リリース手順：リリースブランチ以外では NG', () => {
   assert.match(planRelease({ branch: 'main', tags: [] }).errors[0], /リリースブランチ/);
 });
+
+test('アーカイブ済み（リリース済み）のラベルは NG', () => {
+  const result = checkReleaseLabels({
+    baseBranch: 'main',
+    labels: ['product-a/v1.4.0'],
+    affectedProducts: ['product-a'],
+    versionFile: versionFile('1.5.0', '1.5.0'),
+    baseVersionFile: versionFile('1.5.0', '1.5.0'),
+    branches: BRANCHES,
+    archivedLabels: ['product-a/v1.4.0'],
+  });
+  assertError(result, /リリース済みのラベル（アーカイブ済み）/);
+  assert.equal(result.errors.length, 1);
+});
