@@ -40,7 +40,7 @@ jobs:
           permission-contents: write
           permission-issues: write # リリースラベルを作る
           permission-pull-requests: write
-          permission-workflows: write # 自動化のないタグから作ったブランチに、main の .github を入れるとき
+          permission-workflows: write # リリースブランチの .github を main にそろえるとき
 
       - id: prepare
         uses: actions/github-script@v9
@@ -58,9 +58,17 @@ jobs:
           path: release-work
           persist-credentials: false
 
-      - name: Bring automation from main
-        if: steps.prepare.outputs.bring_automation == 'true'
-        run: rm -rf release-work/.github && cp -R .github release-work/.github
+      # リリースブランチの .github（自動化）が main と違えば、main にそろえる。
+      # 古いタグの自動化のままだと、必須チェックが走らなかったり、直した不具合が残っていたりするため。
+      - id: automation
+        name: Align automation with main
+        run: |
+          if diff -rq .github release-work/.github >/dev/null 2>&1; then
+            echo "aligned=false" >> "$GITHUB_OUTPUT"
+          else
+            rm -rf release-work/.github && cp -R .github release-work/.github
+            echo "aligned=true" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Bump VERSION
         uses: actions/github-script@v9
@@ -81,7 +89,7 @@ jobs:
           base: ${{ steps.prepare.outputs.release_branch }}
           branch: hotfix-prep/${{ inputs.product }}/v${{ steps.prepare.outputs.next_version }}
           delete-branch: true
-          add-paths: ${{ steps.prepare.outputs.bring_automation == 'true' && 'VERSION,.github' || 'VERSION' }}
+          add-paths: VERSION,.github
           commit-message: Bump ${{ inputs.product }} to ${{ steps.prepare.outputs.next_version }}
           title: Bump ${{ inputs.product }} to ${{ steps.prepare.outputs.next_version }}
           labels: ${{ steps.prepare.outputs.next_label }}
@@ -91,6 +99,9 @@ jobs:
             この PR がマージされるまで、このリリースブランチへの PR はラベルのチェックで止まるので、早めにマージしてください。
 
             ${{ steps.prepare.outputs.notes }}
+            ${{ steps.automation.outputs.aligned == 'true' && '- リリースブランチの `.github`（自動化）を main にそろえています。main の CI がこのリリースのコードで通るかを確かめてください。' || '' }}
+
+            この PR に手でコミットを足した場合、Hotfix prep をもう一度実行すると、そのコミットは消えます。
 
       - name: Summary
         env:

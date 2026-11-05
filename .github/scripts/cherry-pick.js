@@ -63,11 +63,17 @@ async function findTargets({ github, context, core }) {
   }
   for (const target of targets) {
     // 修正フェーズのブランチで VERSION をまだ上げていなければ、cherry-pick の PR はラベルのチェックで止まる
+    // （自動化を入れる前のタグから作ったブランチには、VERSION を上げる PR までは VERSION も自動化もない）
     const release = parseReleaseBranch(target);
-    const targetVersion = parseVersionFile(await readFile(github, repo, 'VERSION', target))[release.product];
+    let targetVersion = null;
+    try {
+      targetVersion = parseVersionFile(await readFile(github, repo, 'VERSION', target))[release.product];
+    } catch (error) {
+      if (error.status !== 404) throw error;
+    }
     if (targetVersion !== release.version) {
       problems.push(
-        `${target} の VERSION がまだ ${release.product}/${targetVersion} です。VERSION を上げたあと、cherry-pick の PR で \`gh pr update-branch <番号>\` を実行するか、リリースラベルを一度外して付け直して、ラベルのチェックをやり直してください。`,
+        `${target} の VERSION がまだ ${release.version} になっていません。VERSION を上げる PR がマージされたあと、cherry-pick の PR で \`gh pr update-branch <番号>\` を実行して、チェックをやり直してください。`,
       );
     }
   }
