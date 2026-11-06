@@ -2,13 +2,68 @@ name: CI
 
 on:
   pull_request:
+    # マージ先を変えたときも、今のマージ先との差分で判定し直す（前のマージ先で飛ばした結果を残さない）
+    types: [opened, synchronize, reopened, edited]
 
 permissions:
   contents: read
 
+# 影響する製品のテストだけを動かす。飛ばすときは、ワークフローの paths ではなくジョブの if で飛ばす
+# （if で飛ばしたジョブは必須チェックでも成功の扱いになるが、ワークフローごと動かないとチェックが待ちのまま残る）。
+# 判定のジョブが失敗したときは、念のためすべて動かす。
 jobs:
+  changes:
+    name: find affected products
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read # paths-filter が PR の変更ファイルを API で取る
+    outputs:
+      matched: ${{ steps.paths.outputs.changes }}
+      all_products: ${{ steps.affected.outputs.all_products }}
+      scripts: ${{ steps.affected.outputs.scripts }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      # 影響する製品は、ラベルのチェックと同じ設定（.github/product-paths.yml）で決める。
+      # テストのジョブは、製品のフィルタに当たったか、すべての製品に影響するとき（書かれていないパスや、上限で一覧が切れているかもしれないとき）に動かす。
+      # 製品の一覧は PR の VERSION からは作らない（VERSION から製品の行が消えても、その製品のテストを飛ばさないため）
+      - id: paths
+        uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
+        with:
+          filters: .github/product-paths.yml
+
+      - id: scripts
+        uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
+        with:
+          filters: |
+            scripts:
+              - '.github/**'
+              - 'VERSION'
+
+      - id: affected
+        uses: actions/github-script@v9
+        env:
+          MATCHED: ${{ steps.paths.outputs.changes }}
+          ALL_FILE_COUNT: ${{ steps.paths.outputs.all_count }}
+          LISTED_FILE_COUNT: ${{ steps.paths.outputs.listed_count }}
+          SCRIPTS: ${{ steps.scripts.outputs.scripts }}
+        with:
+          script: |
+            const { MAX_LISTED_FILES, reasonForAllProducts } = require('./.github/scripts/release-labels.js')
+            const allFileCount = Number.parseInt(process.env.ALL_FILE_COUNT, 10)
+            const reason = reasonForAllProducts({ allFileCount, listedFileCount: Number.parseInt(process.env.LISTED_FILE_COUNT, 10) })
+            core.info(`当たったフィルタ：${process.env.MATCHED}${reason ? `（${reason}）` : ''}`)
+            core.setOutput('all_products', String(reason !== null))
+            // 一覧が上限で切れているかもしれないときは、スクリプトの変更も見落としているかもしれないので動かす
+            core.setOutput('scripts', String(process.env.SCRIPTS === 'true' || allFileCount >= MAX_LISTED_FILES))
+
   unit-test-product-a:
     name: unit test for product-a
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.all_products == 'true' || contains(needs.changes.outputs.matched, '"product-a"')) }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -19,6 +74,8 @@ jobs:
 
   unit-test-product-b:
     name: unit test for product-b
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.all_products == 'true' || contains(needs.changes.outputs.matched, '"product-b"')) }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -27,8 +84,11 @@ jobs:
       - name: Run tests
         run: test ! -e ProductB/FAIL
 
+  # 自動化のスクリプトとワークフロー、VERSION（製品名がそろっているかを確かめる）が変わったときだけ動かす
   script-test:
     name: script test
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.scripts == 'true') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7

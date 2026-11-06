@@ -56,24 +56,25 @@ function parseCherryPickBranch(name) {
   return match ? Number(match[1]) : null;
 }
 
-// 変更が影響する製品を、paths-filter が当てたフィルタの名前から決める。
-// 次の場合は、すべての製品に影響するとみなす。
-// - 製品のパス設定に書かれていないファイルの変更がある（all に当たったファイルが listed より多い）
+// paths-filter の all と listed に当たったファイルの数から、すべての製品に影響するとみなす理由を返す（なければ null）。
 // - all に当たったファイルが、GitHub が返す変更ファイルの上限以上ある（一覧が途中で切れているかもしれない。
 //   paths-filter は名前の変更を 2 件と数えるので、上限ちょうどでも切れていないことはあるが、安全側に倒す）
-function findAffectedProducts({ matched, products, allFileCount, listedFileCount }) {
+// - 製品のパス設定に書かれていないファイルの変更がある（all に当たったファイルが listed より多い）
+function reasonForAllProducts({ allFileCount, listedFileCount }) {
   if (!Number.isInteger(allFileCount) || !Number.isInteger(listedFileCount)) {
     throw new Error('paths-filter の all と listed の件数がありません。.github/product-paths.yml を確かめてください。');
   }
-  if (allFileCount >= MAX_LISTED_FILES) {
-    return { products: [...products], reason: `変更ファイルが ${MAX_LISTED_FILES} 件以上あるため、すべての製品に影響するとみなしました。` };
-  }
+  if (allFileCount >= MAX_LISTED_FILES) return `変更ファイルが ${MAX_LISTED_FILES} 件以上あるため、すべての製品に影響するとみなしました。`;
   if (allFileCount > listedFileCount) {
-    return {
-      products: [...products],
-      reason: '.github/product-paths.yml に書かれていないパスの変更があるため、すべての製品に影響するとみなしました。そのパスを使う製品に書き足してください。',
-    };
+    return '.github/product-paths.yml に書かれていないパスの変更があるため、すべての製品に影響するとみなしました。そのパスを使う製品に書き足してください。';
   }
+  return null;
+}
+
+// 変更が影響する製品を、paths-filter が当てたフィルタの名前から決める。
+function findAffectedProducts({ matched, products, allFileCount, listedFileCount }) {
+  const reason = reasonForAllProducts({ allFileCount, listedFileCount });
+  if (reason) return { products: [...products], reason };
   return { products: products.filter((product) => matched.includes(product)), reason: null };
 }
 
@@ -338,6 +339,7 @@ function setVersion(versionFile, product, version) {
 }
 
 module.exports = {
+  MAX_LISTED_FILES,
   checkReleaseLabels,
   cherryPickBranch,
   compareVersions,
@@ -350,5 +352,6 @@ module.exports = {
   planHotfixPrep,
   planRelease,
   planReleasePrep,
+  reasonForAllProducts,
   setVersion,
 };
