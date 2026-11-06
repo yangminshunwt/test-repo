@@ -12,9 +12,9 @@ gh api -X POST repos/{owner}/{repo}/rulesets --input .github/rulesets/<ファイ
 |---|---|---|
 | `protected-branches.json` | `main`・`release/**` | PR を必須にする（マージは squash だけ）、必須チェック、force push の禁止 |
 | `main-deletion.json` | `main` | 削除の禁止（例外なし） |
-| `release-branch-deletion.json` | `release/**` | 削除の禁止（リリース後にリリースブランチを消すため、管理者と自動化の App は除く） |
+| `release-branch-creation-deletion.json` | `release/**` | 作成と削除の禁止（リリースブランチは自動化が作り、リリース後に消すので、管理者と自動化の App は除く） |
 | `release-tags.json` | `*/v*` のタグ | 作成・変更・削除の禁止（管理者と自動化の App は除く） |
 
 必須チェックの `integration_id: 15368` は GitHub Actions を表す。ほかのアプリや commit status から同じ名前の結果を送られても、必須チェックを満たさないようにしている。
 
-`release-tags.json` と `release-branch-deletion.json` の `Integration` の `actor_id` は、自動化に使っている GitHub App の App ID（App の設定ページの General に出る）。リリースの自動化（Release）がタグを打ち、リリースブランチを削除するために、管理者と同じく例外にしている。リポジトリごとに App が違うので、設定するときに書き換える。
+`release-tags.json` と `release-branch-creation-deletion.json` の `Integration` の `actor_id` は、自動化に使っている GitHub App の App ID（App の設定ページの General に出る）。自動化（Release Preparation・Hotfix Preparation）がリリースブランチを作り、Tag Creation がタグを打ってリリースブランチを削除するために、管理者と同じく例外にしている。リポジトリごとに App が違うので、設定するときに書き換える。
