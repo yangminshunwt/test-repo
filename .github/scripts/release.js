@@ -46,6 +46,18 @@ function pullsNotIn(github, repo, head, source) {
   return mergedPullsOf(github, repo, git('rev-list', `${head}..origin/${source}`).split('\n').filter(Boolean), source);
 }
 
+// マージされた cherry-pick の PR（すべての行き先）のマージコミットを、元の PR の番号ごとに返す。
+// PR ごとに検索の API で探すと、検索の上限（1 分に 30 回）をすぐに超えるので、閉じた PR の一覧から一度に作る。
+async function mergedCherryPicks(github, repo) {
+  const picks = new Map();
+  for (const pull of await github.paginate(github.rest.pulls.list, { ...repo, state: 'closed', per_page: 100 })) {
+    const original = parseCherryPickBranch(pull.head.ref);
+    if (original === null || !pull.merged_at) continue;
+    picks.set(original, [...(picks.get(original) ?? []), pull.merge_commit_sha]);
+  }
+  return picks;
+}
+
 // main とより新しいリリースブランチにマージされた PR のうち、その製品のラベルのバージョンがこのブランチのバージョン以下なのに、
 // 変更が head に入っていないもの（cherry-pick の取りこぼし）を返す。
 // 入っているかは、元の PR のマージコミットが head の祖先か、head の履歴に cherry-pick の記録（cherry picked from commit）が
@@ -59,6 +71,7 @@ async function findMissingChanges(github, repo, head, plan) {
       return release && compareVersions(release.version, plan.version) > 0;
     });
   const missing = [];
+  let cherryPicks = null; // 要るときに一度だけ作る
   for (const source of ['main', ...newer]) {
     for (const pull of await pullsNotIn(github, repo, head, source)) {
       const { releaseLabels } = extractReleaseLabels(
@@ -67,14 +80,8 @@ async function findMissingChanges(github, repo, head, plan) {
       );
       if (!releaseLabels.some(({ version }) => compareVersions(version, plan.version) <= 0)) continue;
       if (picked.has(pull.merge_commit_sha) || isAncestor(pull.merge_commit_sha, head)) continue;
-      // 元の PR の cherry-pick の PR（ブランチ名は cherryPickBranch の形）をすべての行き先から探す
-      const { data: search } = await github.rest.search.issuesAndPullRequests({
-        q: `repo:${repo.owner}/${repo.repo} is:pr is:merged head:cherry-pick-${pull.number}-to-`,
-      });
-      const merges = await Promise.all(
-        search.items.map(async (item) => (await github.rest.pulls.get({ ...repo, pull_number: item.number })).data.merge_commit_sha),
-      );
-      if (merges.some((sha) => sha && isAncestor(sha, head))) continue;
+      cherryPicks ??= await mergedCherryPicks(github, repo);
+      if ((cherryPicks.get(pull.number) ?? []).some((sha) => isAncestor(sha, head))) continue;
       missing.push(pull);
     }
   }
