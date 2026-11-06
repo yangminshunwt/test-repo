@@ -116,7 +116,7 @@ async function checkBranch(github, repo, branch, plan, { afterRelease = false } 
   if (missing.length > 0) {
     const guide = afterRelease
       ? 'リリースしたものには入っていないので、その PR のリリースラベルをこのブランチより新しいバージョンに付け替えてから実行し直してください。'
-      : '入れるなら、それぞれ Actions の「Cherry-pick」→「Run workflow」で PR の番号を指定してやり直し、できた PR をマージしてください。' +
+      : '入れるなら、それぞれ Actions の「Cherry-Pick」→「Run workflow」で PR の番号を指定してやり直し、できた PR をマージしてください。' +
         '入れないなら、その PR のリリースラベルをこのブランチより新しいバージョンに付け替えてください。そのあと実行し直してください。';
     return { error: `ラベルではこのリリースに入るはずなのに、${branch} に入っていない変更があります（${prList(missing)}）。${guide}` };
   }
@@ -172,7 +172,7 @@ function guideForLateChanges(pulls) {
   if (picks.length > 0) {
     const originals = picks.map(({ original }) => `#${original}`).join('、');
     guides.push(
-      `cherry-pick で入った変更（${prList(picks.map(({ pull }) => pull))}）は、修正フェーズのブランチを作ったあと、元の PR（${originals}）を Cherry-pick の Run workflow でやり直してください。`,
+      `cherry-pick で入った変更（${prList(picks.map(({ pull }) => pull))}）は、修正フェーズのブランチを作ったあと、元の PR（${originals}）を Cherry-Pick の Run workflow でやり直してください。`,
     );
   }
   if (direct.length > 0) {
