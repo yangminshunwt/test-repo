@@ -81,9 +81,10 @@ test('main：ラベルがなければ NG', () => {
   assertError(check({ labels: ['product-a'] }), /product-a のリリースラベルが付いていません/);
 });
 
-test('main：どの製品にも影響しない変更でも、ラベルは 1 つ必要', () => {
-  assertError(check({ labels: [], affectedProducts: [] }), /リリースラベルが付いていません/);
-  assertOk(check({ labels: ['product-b/v1.5.0'], affectedProducts: [] }));
+test('main：どの製品にも影響しない変更には、ラベルは要らない（付けると NG）', () => {
+  assertOk(check({ labels: [], affectedProducts: [] }));
+  assertOk(check({ labels: ['bug'], affectedProducts: [] }));
+  assertError(check({ labels: ['product-b/v1.5.0'], affectedProducts: [] }), /product-b に影響する変更はありませんが/);
 });
 
 test('main：共有コードの変更には、両方の製品のラベルが必要', () => {
