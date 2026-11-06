@@ -111,8 +111,8 @@ async function findMissingChanges(github, repo, head, plan) {
 }
 
 // 取りこぼしのメッセージ（afterRelease は、リリースが済んだあと）
-// tagged：リリースタグをもう打ったあと（rc ありの release の手順）
-function missingError(branch, { missing, unmatched }, { afterRelease, tagged = false }) {
+// tagged：リリースタグをもう打ったあと。head と releaseTag：rc なしの release で、タグを打つ前に確かめたコミットとタグ
+function missingError(branch, { missing, unmatched }, { afterRelease, tagged = false, head = null, releaseTag = null }) {
   const messages = [];
   if (missing.length > 0) {
     const guide = afterRelease
@@ -126,8 +126,13 @@ function missingError(branch, { missing, unmatched }, { afterRelease, tagged = f
     let next = '';
     if (tagged) {
       next = 'タグはもう打ってあるので、実行し直しても変わりません。';
+    } else if (afterRelease && missing.length > 0) {
+      next = '先に上の PR を片付けて、実行し直してください（PR が見つからないコミットだけが残ったら、そのときの手順を案内します）。';
     } else if (afterRelease) {
-      next = 'このリリースに入っていなくてよいと確かめたら、管理者がこのブランチの先頭（リリースしたコミット）にリリースタグを手で打ってから、実行し直してください。';
+      // 確かめたコミットを名指しする（そのあとにブランチに入ったコミットは、やり直したときにリリースより後のコミットとして知らせる）
+      next =
+        `このリリースに入っていなくてよいと確かめたら、管理者が ${head}（このとき確かめた ${branch} の先頭。リリースしたコミット）に` +
+        `リリースタグ ${releaseTag} を手で打ってから、実行し直してください。`;
     }
     messages.push(
       `${branch} に入っていないコミットのうち、マージした PR が見つからないものがあります（${commitList(unmatched)}）。` +
@@ -162,7 +167,9 @@ async function checkBranch(github, repo, branch, plan, { afterRelease = false } 
     return { error: `${branch} への cherry-pick の PR がまだ開いています（${prList(open)}）。${guide}` };
   }
   const missing = await findMissingChanges(github, repo, head, plan);
-  if (missing.missing.length > 0 || missing.unmatched.length > 0) return { error: missingError(branch, missing, { afterRelease }) };
+  if (missing.missing.length > 0 || missing.unmatched.length > 0) {
+    return { error: missingError(branch, missing, { afterRelease, head, releaseTag: plan.releaseTag }) };
+  }
   return { head };
 }
 
@@ -215,13 +222,13 @@ async function guideForFixPhase(github, repo, pulls, plan) {
   const guides = [];
   if (picks.length > 0) {
     const steps = [];
-    for (const original of new Set(picks.map((pick) => pick.original))) steps.push(await fixPhaseLabelGuide(github, repo, original, plan.product, plan.version));
+    for (const original of new Set(picks.map((pick) => pick.original))) steps.push(await fixPhaseLabelGuide(github, repo, original, plan.product));
     guides.push(
       `cherry-pick の PR（${prList(picks.map(({ pull }) => pull))}）の変更は、修正フェーズのブランチを作ったあと、${steps.join('、')}。そのあと元の PR を Cherry-Pick の Run workflow でやり直してください。`,
     );
   }
   if (direct.length > 0) {
-    guides.push(`ほかの PR（${prList(direct)}）の変更は、修正フェーズのブランチに PR を出してください（ラベルは ${fixPhaseLabel(plan.product, plan.version)}）。`);
+    guides.push(`ほかの PR（${prList(direct)}）の変更は、修正フェーズのブランチに PR を出してください（ラベルは ${await fixPhaseLabel(github, repo, plan.product)}）。`);
   }
   return guides.join('');
 }
@@ -294,19 +301,25 @@ async function release({ github, context, core }) {
   if (head !== target) {
     late = await lateCommits(github, repo, target, head, branch);
     const commits = [prList(late.pulls), late.unmatched.length > 0 ? `PR が見つからないコミット ${commitList(late.unmatched)}` : ''].filter(Boolean).join('、');
-    const guide = await guideForFixPhase(github, repo, late.pulls.map((pull) => ({ number: pull.number, headRef: pull.head.ref })), plan);
+    let guide = await guideForFixPhase(github, repo, late.pulls.map((pull) => ({ number: pull.number, headRef: pull.head.ref })), plan);
+    if (late.unmatched.length > 0) {
+      guide += `PR が見つからないコミット（${commitList(late.unmatched)}）の変更は、修正フェーズのブランチに cherry-pick して PR を出してください（ラベルは ${await fixPhaseLabel(github, repo, plan.product)}）。`;
+    }
     problems.push(
       `${branch} には ${plan.latestRcTag ?? plan.releaseTag} より後のコミットがあり、今回のリリースには入っていません（${commits}）。` +
-        `ブランチは消していません（実行し直しても変わりません）。修正フェーズに入れる変更は、Hotfix Preparation のあと、次のとおりにしてください。${guide}`,
+        'ブランチは消していません（実行し直しても変わりません）。' +
+        (guide ? `修正フェーズに入れる変更は、Hotfix Preparation のあと、次のとおりにしてください。${guide}` : ''),
     );
     lasting += 1;
   }
-  if (plan.latestRcTag) {
-    // rc なしのときは、タグを打つ前に checkBranch で確かめている。rc より後に cherry-pick で入った変更は、上の
-    // 「後から入ったコミット」として知らせているので、ここでは重ねて数えない
+  // 今回タグを打った rc なしのリリースは、タグを打つ前に checkBranch で確かめている。それ以外（rc あり、やり直し、管理者が手で
+  // 打ったタグ）は、ここで確かめる。rc より後に cherry-pick で入った変更は、上の「後から入ったコミット」として知らせているので、
+  // ここでは重ねて数えない
+  if (plan.latestRcTag || plan.released) {
     const lateOriginals = new Set(late.pulls.map((pull) => parseCherryPickBranch(pull.head.ref)).filter((number) => number !== null));
     const found = await findMissingChanges(github, repo, target, plan);
-    const missing = { missing: found.missing.filter((pull) => !lateOriginals.has(pull.number)), unmatched: found.unmatched };
+    // rc なしでタグがあるときの PR が見つからないコミットは、タグを打つ前に管理者が確かめている（手でタグを打つ案内のとおり）
+    const missing = { missing: found.missing.filter((pull) => !lateOriginals.has(pull.number)), unmatched: plan.latestRcTag ? found.unmatched : [] };
     if (missing.missing.length > 0) problems.push(missingError(branch, { missing: missing.missing, unmatched: [] }, { afterRelease: true, tagged: true }));
     if (missing.unmatched.length > 0) {
       problems.push(missingError(branch, { missing: [], unmatched: missing.unmatched }, { afterRelease: true, tagged: true }));

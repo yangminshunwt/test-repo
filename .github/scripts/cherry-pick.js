@@ -80,18 +80,19 @@ async function containsChange(github, repo, shas, ref) {
   return false;
 }
 
-// 修正フェーズのバージョンのラベル。Hotfix Preparation は、いちばん新しいリリースタグの次のパッチで作る
-function fixPhaseLabel(product, releasedVersion) {
-  const [major, minor, patch] = releasedVersion.split('.').map(Number);
+// 修正フェーズのバージョンのラベル。Hotfix Preparation と同じく、製品のいちばん新しいリリースタグの次のパッチ
+async function fixPhaseLabel(github, repo, product) {
+  const versions = [...(await releaseTags(github, repo, [product])).keys()].map((tag) => tag.split('/v')[1]);
+  const [major, minor, patch] = versions.sort(compareVersions).at(-1).split('.').map(Number);
   return `${product}/v${major}.${minor}.${patch + 1}`;
 }
 
-// リリース（releasedVersion）に入らなかった cherry-pick の元の PR を、修正フェーズでやり直すときに、元の PR のラベルを
-// どうするかを今の状態から決めて返す。ラベルのバージョンより前のリリースブランチには cherry-pick しないので、ラベルをそのままに
-// できるのは、ラベルがリリースしたバージョンより前で、まだリリースしていないか、そのリリースにこの変更が入っているときだけ。
-// それ以外（リリースしたバージョンか、それより新しいか、この変更を含まずにリリースされたバージョン）は、修正フェーズのバージョンにする
-async function fixPhaseLabelGuide(github, repo, originalNumber, product, releasedVersion) {
-  const fixLabel = fixPhaseLabel(product, releasedVersion);
+// リリースに入らなかった cherry-pick の元の PR を、修正フェーズでやり直すときに、元の PR のラベルをどうするかを今の状態から
+// 決めて返す。ラベルのバージョンより前のリリースブランチには cherry-pick しないので、ラベルをそのままにできるのは、ラベルが
+// 修正フェーズのバージョン以下で、まだリリースしていないか、そのリリースにこの変更が入っているときだけ。
+// それ以外（修正フェーズより新しいか、この変更を含まずにリリースされたバージョン）は、修正フェーズのバージョンにする
+async function fixPhaseLabelGuide(github, repo, originalNumber, product) {
+  const fixLabel = await fixPhaseLabel(github, repo, product);
   let original;
   try {
     ({ data: original } = await github.rest.pulls.get({ ...repo, pull_number: originalNumber }));
@@ -100,7 +101,7 @@ async function fixPhaseLabelGuide(github, repo, originalNumber, product, release
     return `#${originalNumber} のリリースラベルを ${fixLabel} にする`;
   }
   const label = original.labels.map(({ name }) => name).find((name) => name.startsWith(`${product}/v`) && /^[^/]+\/v\d+\.\d+\.\d+$/.test(name));
-  if (label && compareVersions(label.split('/v')[1], releasedVersion) < 0) {
+  if (label && compareVersions(label.split('/v')[1], fixLabel.split('/v')[1]) <= 0) {
     const tags = await releaseTags(github, repo, [product]);
     const tag = tags.get(label);
     const branches = await listReleaseBranches(github, repo);
@@ -121,8 +122,8 @@ async function releasedLabelProblem(github, repo, pr, label) {
   if (label === `${base.product}/v${base.version}`) {
     const next =
       original !== null
-        ? `修正フェーズに入れるなら、Hotfix Preparation でブランチを作ったあと、${await fixPhaseLabelGuide(github, repo, original, base.product, base.version)}。そのあと Cherry-Pick の Run workflow で #${original} をやり直してください。`
-        : `修正フェーズに入れるなら、Hotfix Preparation で作るブランチに、ラベル ${fixPhaseLabel(base.product, base.version)} を付けて PR を出し直してください。`;
+        ? `修正フェーズに入れるなら、Hotfix Preparation でブランチを作ったあと、${await fixPhaseLabelGuide(github, repo, original, base.product)}。そのあと Cherry-Pick の Run workflow で #${original} をやり直してください。`
+        : `修正フェーズに入れるなら、Hotfix Preparation で作るブランチに、ラベル ${await fixPhaseLabel(github, repo, base.product)} を付けて PR を出し直してください。`;
     return `${head}マージ先の ${pr.base.ref} がリリース済みなので、ここに入れた変更はどのリリースにも入りません。${next}`;
   }
   return `${head}${label} の修正フェーズに入れるなら、Hotfix Preparation でブランチを作ったあと、そのブランチのバージョンに付け替えて、Cherry-Pick の Run workflow でやり直してください。入れないなら、この変更が最初に入る ${base.product}/v${base.version} に付け替えてください。`;
