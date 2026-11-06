@@ -1,5 +1,5 @@
 {
-  "name": "release branch deletion",
+  "name": "release branch creation and deletion",
   "target": "branch",
   "enforcement": "active",
   "conditions": {
@@ -23,6 +23,9 @@
     }
   ],
   "rules": [
+    {
+      "type": "creation"
+    },
     {
       "type": "deletion"
     }
