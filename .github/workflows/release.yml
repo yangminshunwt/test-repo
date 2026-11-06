@@ -1,4 +1,4 @@
-name: Release
+name: Tag Creation
 
 # リリース手順を進める（開発ルールの「リリース手順」）。Use workflow from でリリースブランチを選んで実行する。
 # - rc：リリース申請の前に、リリースブランチの先頭に次の rc タグ（<製品名>/vX.Y.Z-rc.N）を打つ
@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
     inputs:
       step:
-        description: 進める手順（rc はリリース申請の前、release はリリースの後）
+        description: 'Step to run (rc: before the release request, release: after the release)'
         required: true
         type: choice
         options: [rc, release]

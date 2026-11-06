@@ -38,7 +38,7 @@ async function createTag(github, repo, name, sha, message) {
 function checkMainVersion(plan) {
   const mainVersion = parseVersionFile(fs.readFileSync('VERSION', 'utf8'))[plan.product];
   if (mainVersion && compareVersions(mainVersion, plan.version) > 0) return null;
-  return `main の VERSION の ${plan.product} が ${mainVersion} のままです。先に main の VERSION を上げる PR（Release prep が作ったもの）をマージしてください。`;
+  return `main の VERSION の ${plan.product} が ${mainVersion} のままです。先に main の VERSION を上げる PR（Release Preparation が作ったもの）をマージしてください。`;
 }
 
 // source（main か、同じ製品のより新しいリリースブランチ）にマージされた PR のうち、head に入っていないものを返す。
@@ -232,7 +232,7 @@ async function release({ github, context, core }) {
     const late = await pullsNotIn(github, repo, target, branch);
     lateError =
       `${branch} には ${plan.latestRcTag ?? plan.releaseTag} より後のコミットがあり、今回のリリースには入っていません（${prList(late) || '不明'}）。ブランチは消していません。` +
-      `次の修正に入れるなら、管理者がこのブランチを削除して Hotfix prep を実行してください。${guideForLateChanges(late)}`;
+      `次の修正に入れるなら、管理者がこのブランチを削除して Hotfix Preparation を実行してください。${guideForLateChanges(late)}`;
   } else {
     const open = await github.paginate(github.rest.pulls.list, { ...repo, state: 'open', base: branch, per_page: 100 });
     if (open.length > 0) core.warning(`${branch} に向けた開いている PR（${prList(open)}）は、ブランチの削除で閉じられます。`);

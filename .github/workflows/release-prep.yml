@@ -1,4 +1,4 @@
-name: Release prep
+name: Release Preparation
 
 # リリースの準備フェーズに入る（開発ルールの「開発フェーズの入り方」）。
 # main から今のバージョンのリリースブランチを作り、次のバージョンのリリースラベルを作ってから、
@@ -7,13 +7,13 @@ on:
   workflow_dispatch:
     inputs:
       product:
-        description: 製品
+        description: Product
         required: true
         type: choice
         # VERSION ファイルの製品名と同じにする（script test で確かめている）
         options: [product-a, product-b, product-c]
       bump:
-        description: main の次のバージョン（minor は 1.1.0 → 1.2.0、major は 1.1.0 → 2.0.0）
+        description: 'Next version on main (minor: X.Y.Z → X.(Y+1).0, major: X.Y.Z → (X+1).0.0)'
         required: true
         type: choice
         default: minor
@@ -86,11 +86,11 @@ jobs:
           title: Bump ${{ inputs.product }} to ${{ steps.prepare.outputs.next_version }}
           labels: ${{ steps.prepare.outputs.next_label }}
           body: |
-            `main` の ${{ inputs.product }} の VERSION を ${{ steps.prepare.outputs.current_version }} から ${{ steps.prepare.outputs.next_version }} に上げる PR です（Release prep のワークフローが作りました）。
+            `main` の ${{ inputs.product }} の VERSION を ${{ steps.prepare.outputs.current_version }} から ${{ steps.prepare.outputs.next_version }} に上げる PR です（Release Preparation のワークフローが作りました）。
 
             `${{ steps.prepare.outputs.release_branch }}` はもう作ってあります。この PR がマージされるまで、${{ inputs.product }} の次のバージョン向けの PR は `main` にマージできないので、早めにマージしてください。
 
-            この PR がコンフリクトしたら（ほかの製品の VERSION を上げる PR が先にマージされたときなど）、Actions の「Release prep」を同じ製品でもう一度実行すると、最新の `main` の上に作り直されます。
+            この PR がコンフリクトしたら（ほかの製品の VERSION を上げる PR が先にマージされたときなど）、Actions の「Release Preparation」を同じ製品でもう一度実行すると、最新の `main` の上に作り直されます。
 
       - name: Summary
         env:
