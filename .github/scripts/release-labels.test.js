@@ -14,6 +14,7 @@ const {
   planHotfixPrep,
   planRelease,
   planReleasePrep,
+  reasonForAllProducts,
   setVersion,
 } = require('./release-labels.js');
 
@@ -246,6 +247,12 @@ test('影響する製品：パス設定に書かれていないファイルが�
 test('影響する製品：変更ファイルが 3000 件以上あれば（一覧が切れているかもしれない）、すべての製品に影響するとみなす', () => {
   assert.deepEqual(findAffectedProducts({ matched: ['product-a'], products: PRODUCTS, allFileCount: 3000, listedFileCount: 3000 }).products, PRODUCTS);
   assert.deepEqual(findAffectedProducts({ matched: ['product-a'], products: PRODUCTS, allFileCount: 2999, listedFileCount: 2999 }).products, ['product-a']);
+});
+
+test('すべての製品に影響するとみなす理由：書かれていないパスか、上限で一覧が切れているかもしれないとき', () => {
+  assert.equal(reasonForAllProducts({ allFileCount: 5, listedFileCount: 5 }), null);
+  assert.match(reasonForAllProducts({ allFileCount: 5, listedFileCount: 4 }), /書かれていないパス/);
+  assert.match(reasonForAllProducts({ allFileCount: 3000, listedFileCount: 3000 }), /3000 件以上/);
 });
 
 test('影響する製品：all と listed の件数がなければエラー（パス設定の誤り）', () => {
