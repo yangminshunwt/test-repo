@@ -42,7 +42,6 @@ jobs:
                 // マージ済みなら、実際にマージしたコミットで判定する
                 core.setOutput('sha', pr.merged ? pr.merge_commit_sha : context.sha);
                 core.setOutput('base_ref', pr.base.ref);
-                core.setOutput('changed_files', pr.changed_files);
                 return;
               }
               if (pr.mergeable === false) {
@@ -56,7 +55,6 @@ jobs:
                 if (parents[0] === base.commit.sha && parents[1] === pr.head.sha) {
                   core.setOutput('sha', pr.merge_commit_sha);
                   core.setOutput('base_ref', pr.base.ref);
-                  core.setOutput('changed_files', pr.changed_files);
                   return;
                 }
               }
@@ -82,7 +80,6 @@ jobs:
         uses: actions/github-script@v9
         env:
           BASE_REF: ${{ steps.merge.outputs.base_ref }}
-          CHANGED_FILES: ${{ steps.merge.outputs.changed_files }}
           AFFECTED_PRODUCTS: ${{ steps.products.outputs.changes }}
           ALL_FILE_COUNT: ${{ steps.products.outputs.all_count }}
           LISTED_FILE_COUNT: ${{ steps.products.outputs.listed_count }}

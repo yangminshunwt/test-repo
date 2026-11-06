@@ -4,14 +4,14 @@
 
 const { execFileSync } = require('child_process');
 const fs = require('fs');
+const { listReleaseBranches } = require('./github-helpers.js');
 const { checkReleaseLabels, findAffectedProducts, parseVersionFile } = require('./release-labels.js');
 
 module.exports = async ({ github, context, core }) => {
   const { owner, repo } = context.repo;
   const pr = context.payload.pull_request;
-  // イベントの後にマージ先が変わっていても今のマージ先で判定するため、チェックアウトの前に取り直した値を使う
-  const baseBranch = process.env.BASE_REF || pr.base.ref;
-  const changedFileCount = process.env.CHANGED_FILES ? Number(process.env.CHANGED_FILES) : pr.changed_files;
+  // イベントの後にマージ先が変わっていても今のマージ先で判定するため、前のステップで取り直したマージ先を使う
+  const baseBranch = process.env.BASE_REF;
 
   // イベントの後に付け外しされたラベルも含めるため、今のラベルを取り直す。
   const labelObjects = await github.paginate(github.rest.issues.listLabelsOnIssue, {
@@ -38,18 +38,11 @@ module.exports = async ({ github, context, core }) => {
   const affected = findAffectedProducts({
     matched: JSON.parse(process.env.AFFECTED_PRODUCTS || '[]'),
     products,
-    changedFileCount,
     allFileCount: Number.parseInt(process.env.ALL_FILE_COUNT, 10),
     listedFileCount: Number.parseInt(process.env.LISTED_FILE_COUNT, 10),
   });
 
-  const refs = await github.paginate(github.rest.git.listMatchingRefs, {
-    owner,
-    repo,
-    ref: 'heads/release/',
-    per_page: 100,
-  });
-  const branches = refs.map((ref) => ref.ref.replace(/^refs\/heads\//, ''));
+  const branches = await listReleaseBranches(github, context.repo);
 
   const { errors, warnings } = checkReleaseLabels({
     baseBranch,

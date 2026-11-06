@@ -19,6 +19,9 @@ on:
 permissions:
   contents: read
 
+env:
+  PR_NUMBER: ${{ inputs.pr_number || github.event.pull_request.number }}
+
 jobs:
   targets:
     name: find cherry-pick targets
@@ -28,7 +31,6 @@ jobs:
       contents: read
       pull-requests: write # 行き先を決められないときに元の PR へコメントする（PR へのコメントには pull-requests の権限が要る）
     outputs:
-      pr_number: ${{ steps.targets.outputs.pr_number }}
       all_branches: ${{ steps.targets.outputs.all_branches }}
     steps:
       - uses: actions/checkout@v7
@@ -37,8 +39,6 @@ jobs:
 
       - id: targets
         uses: actions/github-script@v9
-        env:
-          PR_NUMBER: ${{ inputs.pr_number || github.event.pull_request.number }}
         with:
           retries: 3 # GitHub API の一時的なエラー（5xx）はやり直す
           script: |
@@ -54,7 +54,6 @@ jobs:
       contents: read
       pull-requests: write # 失敗を元の PR へコメントする（App のトークンを作れなかったときも知らせるため GITHUB_TOKEN で）
     env:
-      PR_NUMBER: ${{ needs.targets.outputs.pr_number }}
       TARGETS: ${{ needs.targets.outputs.all_branches }}
     steps:
       # スクリプト用。途中のステップが失敗しても失敗を知らせられるよう、最初に取る
@@ -96,10 +95,10 @@ jobs:
         with:
           github_token: ${{ steps.app-token.outputs.token }}
           github_workspace: ${{ github.workspace }}/backport-work
-          source_pr_number: ${{ needs.targets.outputs.pr_number }}
+          source_pr_number: ${{ env.PR_NUMBER }}
           target_branches: ${{ steps.pending.outputs.branches }}
           label_pattern: '' # 行き先は targets ジョブと pending ステップで決めたものだけにする
-          branch_name: cherry-pick-${pull_number}-to-${target_branch} # cherry-pick.js の cherryPickBranch と同じ形
+          branch_name: cherry-pick-${pull_number}-to-${target_branch} # release-labels.js の cherryPickBranch・parseCherryPickBranch と同じ形
           # ${...} は、タイトルと本文のそれぞれで最初の 1 か所しか置き換わらないので、同じものを 2 回書かない
           pull_title: '[🍒 #${pull_number} → ${target_branch}] ${pull_title}'
           pull_description: |-
@@ -125,11 +124,8 @@ jobs:
         uses: actions/github-script@v9
         env:
           APP_TOKEN_OUTCOME: ${{ steps.app-token.outcome }}
-          PENDING_OUTCOME: ${{ steps.pending.outcome }}
-          PENDING_BRANCHES: ${{ steps.pending.outputs.branches }}
-          BACKPORT_OUTCOME: ${{ steps.backport.outcome }}
+          JOB_STATUS: ${{ job.status }}
           RESULTS: ${{ steps.backport.outputs.was_successful_by_target }}
-          LABEL_OUTCOME: ${{ steps.label.outcome }}
         with:
           retries: 3 # GitHub API の一時的なエラー（5xx）はやり直す
           script: |

@@ -90,8 +90,6 @@ jobs:
 
             `${{ steps.prepare.outputs.release_branch }}` はもう作ってあります。この PR がマージされるまで、${{ inputs.product }} の次のバージョン向けの PR は `main` にマージできないので、早めにマージしてください。
 
-            ${{ steps.prepare.outputs.notes }}
-
             この PR がコンフリクトしたら（ほかの製品の VERSION を上げる PR が先にマージされたときなど）、Actions の「Release prep」を同じ製品でもう一度実行すると、最新の `main` の上に作り直されます。
 
       - name: Summary
