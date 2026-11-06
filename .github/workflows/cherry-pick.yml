@@ -103,7 +103,7 @@ jobs:
           pull_title: '🍒 [#${pull_number} → ${target_branch}] ${pull_title}'
           pull_description: |-
             #${pull_number} を `${target_branch}` に cherry-pick する PR です。
-          add_author_as_assignee: true
+          copy_assignees: true # 元の PR の担当者を引き継ぐ（担当者がいなければ付けない）
           comment_style: summary
           # コンフリクトしたら、コンフリクトを含んだままの draft PR を作り、解き方を元の PR にコメントする
           experimental: '{"conflict_resolution": "draft_commit_conflicts"}'
