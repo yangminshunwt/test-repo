@@ -100,8 +100,8 @@ jobs:
           target_branches: ${{ steps.pending.outputs.branches }}
           label_pattern: '' # 行き先は targets ジョブと pending ステップで決めたものだけにする
           branch_name: cherry-pick-${pull_number}-to-${target_branch} # cherry-pick.js の cherryPickBranch と同じ形
-          # タイトルと本文の ${...} は、それぞれ最初の 1 か所しか置き換わらないので、同じものを 2 回書かない
-          pull_title: '[🍒 → ${target_branch}] ${pull_title}'
+          # ${...} は、タイトルと本文のそれぞれで最初の 1 か所しか置き換わらないので、同じものを 2 回書かない
+          pull_title: '[🍒 #${pull_number} → ${target_branch}] ${pull_title}'
           pull_description: |-
             #${pull_number} を `${target_branch}` に cherry-pick する PR です。
           add_author_as_assignee: true
