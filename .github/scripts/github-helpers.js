@@ -41,8 +41,13 @@ async function labelExists(github, repo, name) {
 
 // 今あるリリースブランチ（release/...）の名前を返す
 async function listReleaseBranches(github, repo) {
+  return [...(await listReleaseBranchHeads(github, repo)).keys()];
+}
+
+// リリースブランチ（release/ で始まるブランチ）を、ブランチ名 → 先頭のコミットで返す（ひとつの一覧から取るので、互いに食い違わない）
+async function listReleaseBranchHeads(github, repo) {
   const refs = await github.paginate(github.rest.git.listMatchingRefs, { ...repo, ref: 'heads/release/', per_page: 100 });
-  return refs.map((ref) => ref.ref.replace(/^refs\/heads\//, ''));
+  return new Map(refs.map((ref) => [ref.ref.replace(/^refs\/heads\//, ''), ref.object.sha]));
 }
 
 // base（ブランチ名。ほかのブランチも受け入れるときは ref を受け取る関数）にマージされた PR のうち、マージコミットが shas にあるものを pulls で返す。
@@ -140,4 +145,4 @@ async function report(core, heading, lines) {
   await core.summary.addHeading(heading, 3).addList(lines).write();
 }
 
-module.exports = { branchExists, compareShas, deleteBranchIfAt, labelExists, listReleaseBranches, mentionsOf, mergedPullsForCommits, prList, readFile, report, tagCommit };
+module.exports = { branchExists, compareShas, deleteBranchIfAt, labelExists, listReleaseBranches, listReleaseBranchHeads, mentionsOf, mergedPullsForCommits, prList, readFile, report, tagCommit };

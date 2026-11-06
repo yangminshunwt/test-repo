@@ -1,8 +1,8 @@
 // cherry-pick.yml から actions/github-script で呼ぶ処理。
 'use strict';
 
-const { deleteBranchIfAt, listReleaseBranches, mentionsOf, readFile, tagCommit } = require('./github-helpers.js');
-const { cherryPickBranch, findCherryPickTargets, parseCherryPickBranch, parseReleaseBranch, parseVersionFile } = require('./release-labels.js');
+const { deleteBranchIfAt, listReleaseBranches, listReleaseBranchHeads, mentionsOf, readFile, tagCommit } = require('./github-helpers.js');
+const { cherryPickBranch, compareVersions, findCherryPickTargets, parseCherryPickBranch, parseReleaseBranch, parseVersionFile } = require('./release-labels.js');
 
 function manualGuide(prNumber) {
   return [
@@ -36,7 +36,9 @@ async function releaseTags(github, repo, products) {
 
 // 元の PR の変更を運んだコミット（元の PR のマージコミットと、マージした cherry-pick の PR のマージコミット）を返す。
 // cherry-pick の PR を探すのは、ラベルの製品の、今あるリリースブランチ・ラベルのバージョンのリリースブランチ・リリースした
-// バージョンのリリースブランチ（どちらも、もう消したものも）。行き先が多くても 1 回で済むよう、GraphQL でまとめて探す
+// バージョンのリリースブランチ（どちらも、もう消したものも）。行き先ごとに API を呼ばないよう、GraphQL で
+// BRANCHES_PER_QUERY 件ずつまとめて探す（1 回の問い合わせで最大 50 × 10 ノード。GitHub の上限よりずっと少ない）
+const BRANCHES_PER_QUERY = 50;
 async function changeCommits(github, repo, pr, branches, tags) {
   const labels = pr.labels.map(({ name }) => name).filter((name) => /^[^/]+\/v\d+\.\d+\.\d+$/.test(name));
   const products = new Set(labels.map((label) => label.split('/v')[0]));
@@ -47,8 +49,8 @@ async function changeCommits(github, repo, pr, branches, tags) {
     ]),
   ];
   const shas = [pr.merge_commit_sha];
-  for (let start = 0; start < names.length; start += 50) {
-    const fields = names.slice(start, start + 50).map(
+  for (let start = 0; start < names.length; start += BRANCHES_PER_QUERY) {
+    const fields = names.slice(start, start + BRANCHES_PER_QUERY).map(
       (name, index) =>
         `b${index}: pullRequests(headRefName: ${JSON.stringify(cherryPickBranch(pr.number, name))}, baseRefName: ${JSON.stringify(name)}, states: MERGED, first: 10) { nodes { isCrossRepository mergeCommit { oid } } }`,
     );
@@ -63,14 +65,14 @@ async function changeCommits(github, repo, pr, branches, tags) {
   return shas;
 }
 
-// ref（コミットかブランチ名）に、変更を運んだコミットのどれかが入っているか（祖先か同じか）。時刻ではなく、コミットのつながりで決める
+// ref（コミット）に、変更を運んだコミットのどれかが入っているか（祖先か同じか）。時刻ではなく、コミットのつながりで決める
 async function containsChange(github, repo, shas, ref) {
   for (const sha of shas) {
     let status;
     try {
       ({ status } = (await github.rest.repos.compareCommitsWithBasehead({ ...repo, basehead: `${sha}...${ref}`, per_page: 1 })).data);
     } catch (error) {
-      if (error.status === 404) continue; // どのブランチにもタグにも残っていないコミットは、ref にも入っていない
+      if (error.status === 404) continue; // ref はあるコミットなので、404 は運んだコミットがもうない（ref にも入っていない）
       throw error;
     }
     if (status === 'ahead' || status === 'identical') return true;
@@ -78,39 +80,52 @@ async function containsChange(github, repo, shas, ref) {
   return false;
 }
 
-// リリース済みで、この変更を含まないバージョンのラベルの案内。ラベルのバージョンより前のリリースブランチには cherry-pick しない
-// ので、修正フェーズに入れるには、Hotfix Preparation で作ったブランチのバージョンにラベルを付け替える。
-// originalLabel：cherry-pick の PR のときの、元の PR のその製品のラベル（それより前のバージョンなら、元の PR のラベルはそのまま）
-function releasedLabelProblem(pr, label, originalLabel) {
+// 修正フェーズのバージョンのラベル。Hotfix Preparation は、いちばん新しいリリースタグの次のパッチで作る
+function fixPhaseLabel(product, releasedVersion) {
+  const [major, minor, patch] = releasedVersion.split('.').map(Number);
+  return `${product}/v${major}.${minor}.${patch + 1}`;
+}
+
+// リリース（releasedVersion）に入らなかった cherry-pick の元の PR を、修正フェーズでやり直すときに、元の PR のラベルを
+// どうするかを今の状態から決めて返す。ラベルのバージョンより前のリリースブランチには cherry-pick しないので、ラベルをそのままに
+// できるのは、ラベルがリリースしたバージョンより前で、まだリリースしていないか、そのリリースにこの変更が入っているときだけ。
+// それ以外（リリースしたバージョンか、それより新しいか、この変更を含まずにリリースされたバージョン）は、修正フェーズのバージョンにする
+async function fixPhaseLabelGuide(github, repo, originalNumber, product, releasedVersion) {
+  const fixLabel = fixPhaseLabel(product, releasedVersion);
+  let original;
+  try {
+    ({ data: original } = await github.rest.pulls.get({ ...repo, pull_number: originalNumber }));
+  } catch (error) {
+    if (error.status !== 404) throw error;
+    return `#${originalNumber} のリリースラベルを ${fixLabel} にする`;
+  }
+  const label = original.labels.map(({ name }) => name).find((name) => name.startsWith(`${product}/v`) && /^[^/]+\/v\d+\.\d+\.\d+$/.test(name));
+  if (label && compareVersions(label.split('/v')[1], releasedVersion) < 0) {
+    const tags = await releaseTags(github, repo, [product]);
+    const tag = tags.get(label);
+    const branches = await listReleaseBranches(github, repo);
+    if (!tag || (await containsChange(github, repo, await changeCommits(github, repo, original, branches, tags), await tagCommit(github, repo, tag)))) {
+      return `#${originalNumber} のリリースラベル（${label}）はそのままにする`;
+    }
+  }
+  return `#${originalNumber} のリリースラベル${label ? `（${label}）` : ''}を ${fixLabel} にする`;
+}
+
+// リリース済みで、この変更を含まないバージョンのラベルの案内
+async function releasedLabelProblem(github, repo, pr, label) {
   const base = parseReleaseBranch(pr.base.ref);
   const original = parseCherryPickBranch(pr.head.ref);
   const head = `${label}：このバージョンは、この変更を含まずにリリースされています。`;
-  const hotfix = '修正フェーズに入れるなら、Hotfix Preparation でブランチを作ったあと、そのブランチのバージョンに付け替えます';
+  const hotfix = '修正フェーズに入れるなら、Hotfix Preparation でブランチを作ったあと、そのブランチのバージョンにします';
   if (!base) return `${head}この変更が最初に入るリリースのバージョンに付け替えてから、Cherry-Pick の Run workflow でやり直してください（${hotfix}）。`;
   if (label === `${base.product}/v${base.version}`) {
-    let next = 'Hotfix Preparation で作るブランチに、そのブランチのバージョンのラベルを付けて PR を出し直してください。';
-    if (original !== null && originalLabel && originalLabel !== label) {
-      next = `元の PR（#${original}）のラベル（${originalLabel}）はそのままで、Hotfix Preparation で修正フェーズのブランチを作ったあと、Cherry-Pick の Run workflow で #${original} をやり直してください。`;
-    } else if (original !== null) {
-      next = `元の PR（#${original}）のラベルを、この変更が最初に入るリリースのバージョンに付け替えてから（${hotfix}）、Cherry-Pick の Run workflow で #${original} をやり直してください。`;
-    }
-    return `${head}マージ先の ${pr.base.ref} がリリース済みなので、この変更はどのリリースにも入っていません。${next}`;
+    const next =
+      original !== null
+        ? `修正フェーズに入れるなら、Hotfix Preparation でブランチを作ったあと、${await fixPhaseLabelGuide(github, repo, original, base.product, base.version)}。そのあと Cherry-Pick の Run workflow で #${original} をやり直してください。`
+        : `修正フェーズに入れるなら、Hotfix Preparation で作るブランチに、ラベル ${fixPhaseLabel(base.product, base.version)} を付けて PR を出し直してください。`;
+    return `${head}マージ先の ${pr.base.ref} がリリース済みなので、ここに入れた変更はどのリリースにも入りません。${next}`;
   }
   return `${head}${label} の修正フェーズに入れるなら、Hotfix Preparation でブランチを作ったあと、そのブランチのバージョンに付け替えて、Cherry-Pick の Run workflow でやり直してください。入れないなら、この変更が最初に入る ${base.product}/v${base.version} に付け替えてください。`;
-}
-
-// cherry-pick の PR の元の PR の、その製品のリリースラベル（見つからなければ null）
-async function originalLabelOf(github, repo, pr) {
-  const original = parseCherryPickBranch(pr.head.ref);
-  const base = parseReleaseBranch(pr.base.ref);
-  if (original === null || !base) return null;
-  try {
-    const { data } = await github.rest.pulls.get({ ...repo, pull_number: original });
-    return data.labels.map(({ name }) => name).find((name) => name.startsWith(`${base.product}/v`)) ?? null;
-  } catch (error) {
-    if (error.status === 404) return null;
-    throw error;
-  }
 }
 
 // 元の PR の cherry-pick 先を今の状態から決め、{ error } か { targets, problems } を返す。targets ジョブと cherry-pick ジョブ
@@ -118,7 +133,9 @@ async function originalLabelOf(github, repo, pr) {
 async function computeTargets(github, repo, pr) {
   const versionFile = await readFile(github, repo, 'VERSION', pr.merge_commit_sha);
   if (versionFile === null) return { error: `#${pr.number} をマージしたコミットに VERSION がありません。` };
-  const branches = await listReleaseBranches(github, repo);
+  // 行き先のブランチは、この一覧の時点の先頭で確かめる（途中でブランチが消されても、判断が食い違わない）
+  const heads = await listReleaseBranchHeads(github, repo);
+  const branches = [...heads.keys()];
   const tags = await releaseTags(github, repo, Object.keys(parseVersionFile(versionFile)));
 
   const carriers = await changeCommits(github, repo, pr, branches, tags);
@@ -129,7 +146,7 @@ async function computeTargets(github, repo, pr) {
   const problems = [];
   for (const { name } of pr.labels) {
     const tag = tags.get(name);
-    if (tag && !(await inRelease(tag))) problems.push(releasedLabelProblem(pr, name, await originalLabelOf(github, repo, pr)));
+    if (tag && !(await inRelease(tag))) problems.push(await releasedLabelProblem(github, repo, pr, name));
     else labels.push(name);
   }
 
@@ -146,7 +163,7 @@ async function computeTargets(github, repo, pr) {
     }
     // もう入っている行き先（この変更より後に作ったブランチ、この変更が入ったタグから作った修正フェーズのブランチ、
     // マージした cherry-pick の PR があるブランチ）には、cherry-pick しない
-    if (await containsChange(github, repo, carriers, target)) continue;
+    if (await containsChange(github, repo, carriers, heads.get(target))) continue;
     targets.push(target);
   }
   for (const { label, product, version } of found.missing) {
@@ -162,7 +179,7 @@ async function computeTargets(github, repo, pr) {
   for (const target of targets) {
     // 修正フェーズのブランチで VERSION をまだ上げていなければ、cherry-pick の PR はラベルのチェックで止まる
     const release = parseReleaseBranch(target);
-    const targetVersionFile = await readFile(github, repo, 'VERSION', target);
+    const targetVersionFile = await readFile(github, repo, 'VERSION', heads.get(target));
     if (targetVersionFile === null || parseVersionFile(targetVersionFile)[release.product] !== release.version) {
       problems.push(
         `${target} の VERSION がまだ ${release.version} になっていません。VERSION を上げる PR がマージされたあと、cherry-pick の PR で \`gh pr update-branch <番号>\` を実行して、チェックをやり直してください。`,
@@ -362,4 +379,4 @@ async function reportTargetsFailure({ github, context }) {
   });
 }
 
-module.exports = { findTargets, selectPending, waitForMergeLink, labelPullRequests, reportFailures, reportTargetsFailure };
+module.exports = { fixPhaseLabel, fixPhaseLabelGuide, findTargets, selectPending, waitForMergeLink, labelPullRequests, reportFailures, reportTargetsFailure };
