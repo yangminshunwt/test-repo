@@ -7,7 +7,7 @@ const { cherryPickBranch, findCherryPickTargets, parseReleaseBranch, parseVersio
 function manualGuide(prNumber) {
   return [
     `手で cherry-pick するときは、行き先のブランチから \`${cherryPickBranch(prNumber, '<行き先のブランチ>')}\` という名前の作業ブランチを作って cherry-pick し、行き先のブランチのバージョンのリリースラベル（例：\`release/product-a/v1.4.0\` なら \`product-a/v1.4.0\`）を付けて PR を出してください。この名前にしておくと、自動でやり直したときに重ねて作られません。元の PR のラベルを付けると、その PR のマージでさらに cherry-pick されます。`,
-    `原因を直して自動でやり直すときは、Actions の「Cherry-pick」→「Run workflow」で、PR の番号 ${prNumber} を指定してください。`,
+    `原因を直して自動でやり直すときは、Actions の「Cherry-Pick」→「Run workflow」で、PR の番号 ${prNumber} を指定してください。`,
   ].join('\n\n');
 }
 

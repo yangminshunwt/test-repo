@@ -1,4 +1,4 @@
-name: Cherry-pick
+name: Cherry-Pick
 
 # マージされた PR の変更を、リリースラベルが表す範囲のリリースブランチに cherry-pick する PR を作る。
 # pull_request_target はマージ先に関係なく既定ブランチ（main）のワークフローとスクリプトで動く。PR のコードは実行しない。
@@ -12,7 +12,7 @@ on:
   workflow_dispatch:
     inputs:
       pr_number:
-        description: cherry-pick する PR の番号（マージ済みのもの）
+        description: Number of the merged PR to cherry-pick
         required: true
         type: number
 
