@@ -184,7 +184,7 @@ function checkReleaseLabels({ baseBranch, labels, affectedProducts, versionFile,
     if (before !== undefined && compareVersions(after, before) < 0) {
       errors.push(`VERSION の ${product} を ${before} から ${after} に下げています。`);
     } else if (!release && before !== undefined && !hasBranch(product, before)) {
-      errors.push(`VERSION の ${product} を上げる前に、release/${product}/v${before} を作ってください（Actions の「Release prep」を使うと順番どおりに進みます）。`);
+      errors.push(`VERSION の ${product} を上げる前に、release/${product}/v${before} を作ってください（Actions の「Release Preparation」を使うと順番どおりに進みます）。`);
     }
     for (const { label, version } of labelsByProduct.get(product) ?? []) {
       if (version !== after) {

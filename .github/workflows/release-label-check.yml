@@ -1,4 +1,4 @@
-name: Release label check
+name: Release Label Check
 
 on:
   pull_request:

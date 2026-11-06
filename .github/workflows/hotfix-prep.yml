@@ -1,4 +1,4 @@
-name: Hotfix prep
+name: Hotfix Preparation
 
 # リリース済みのバージョンに対する修正フェーズに入る（開発ルールの「開発フェーズの入り方」）。
 # その製品の最新のリリースタグから次のパッチバージョンのリリースブランチを作り、リリースラベルを作ってから、
@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       product:
-        description: 製品
+        description: Product
         required: true
         type: choice
         # VERSION ファイルの製品名と同じにする（script test で確かめている）
@@ -95,14 +95,14 @@ jobs:
           title: Bump ${{ inputs.product }} to ${{ steps.prepare.outputs.next_version }}
           labels: ${{ steps.prepare.outputs.next_label }}
           body: |
-            `${{ steps.prepare.outputs.release_branch }}`（${{ steps.prepare.outputs.released_tag }} から作ったリリースブランチ）の ${{ inputs.product }} の VERSION を ${{ steps.prepare.outputs.next_version }} に上げる PR です（Hotfix prep のワークフローが作りました）。
+            `${{ steps.prepare.outputs.release_branch }}`（${{ steps.prepare.outputs.released_tag }} から作ったリリースブランチ）の ${{ inputs.product }} の VERSION を ${{ steps.prepare.outputs.next_version }} に上げる PR です（Hotfix Preparation のワークフローが作りました）。
 
             この PR がマージされるまで、このリリースブランチへの PR はラベルのチェックで止まるので、早めにマージしてください。
 
             ${{ steps.prepare.outputs.notes }}
             ${{ steps.automation.outputs.aligned == 'true' && '- リリースブランチの `.github`（自動化）を main にそろえています。main の CI がこのリリースのコードで通るかを確かめてください。' || '' }}
 
-            この PR に手でコミットを足した場合、Hotfix prep をもう一度実行すると、そのコミットは消えます。
+            この PR に手でコミットを足した場合、Hotfix Preparation をもう一度実行すると、そのコミットは消えます。
 
       - name: Summary
         env:
