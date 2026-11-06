@@ -24,44 +24,22 @@ jobs:
       issues: read
       pull-requests: read
     steps:
-      # マージ先を変えた（edited）直後は、GitHub がテスト用のマージコミットを作り直す前にこの実行が始まり、
-      # イベントのマージコミットが前のマージ先とのマージのままのことがある。そのまま判定すると、前のマージ先の
-      # VERSION と比べてしまう。今のマージ先の先頭と PR の先頭とのマージコミットができるまで待ち、それで判定する。
+      # マージ先を変えた直後でも今のマージ先で判定するよう、今のマージ先とのマージコミットができるまで待つ
+      # （.github/scripts/merge-commit.js）。待つスクリプトを読むためだけに、先にスクリプトを別の場所に取る
+      - uses: actions/checkout@v7
+        with:
+          path: .wait-scripts
+          sparse-checkout: .github/scripts
+          persist-credentials: false
+
       - name: Wait for the merge commit with the current base
         id: merge
         uses: actions/github-script@v9
         with:
           retries: 3 # GitHub API の一時的なエラー（5xx）はやり直す
           script: |
-            const repo = context.repo;
-            const pull_number = context.payload.pull_request.number;
-            for (let attempt = 0; attempt < 30; attempt++) {
-              const { data: pr } = await github.rest.pulls.get({ ...repo, pull_number });
-              if (pr.state !== 'open') {
-                // 閉じた PR（マージ後にラベルを直したときなど）はマージコミットが作り直されないので待たない。
-                // マージ済みなら、実際にマージしたコミットで判定する
-                core.setOutput('sha', pr.merged ? pr.merge_commit_sha : context.sha);
-                core.setOutput('base_ref', pr.base.ref);
-                return;
-              }
-              if (pr.mergeable === false) {
-                core.setFailed(`${pr.base.ref} とコンフリクトしています。解消して push すると、もう一度チェックします。`);
-                return;
-              }
-              if (pr.mergeable && pr.merge_commit_sha) {
-                const { data: base } = await github.rest.repos.getBranch({ ...repo, branch: pr.base.ref });
-                const { data: merge } = await github.rest.git.getCommit({ ...repo, commit_sha: pr.merge_commit_sha });
-                const parents = merge.parents.map((parent) => parent.sha);
-                if (parents[0] === base.commit.sha && parents[1] === pr.head.sha) {
-                  core.setOutput('sha', pr.merge_commit_sha);
-                  core.setOutput('base_ref', pr.base.ref);
-                  return;
-                }
-              }
-              core.info(`今のマージ先（${pr.base.ref}）とのマージコミットができるのを待っています（${attempt + 1} 回目）。`);
-              await new Promise((resolve) => setTimeout(resolve, 5000));
-            }
-            core.setFailed('今のマージ先とのマージコミットを GitHub から取れませんでした。しばらくしてから Re-run してください。');
+            const { waitForMergeCommit } = require('./.wait-scripts/.github/scripts/merge-commit.js')
+            await waitForMergeCommit({ github, context, core })
 
       - uses: actions/checkout@v7
         with:

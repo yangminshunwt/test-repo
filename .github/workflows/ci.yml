@@ -10,7 +10,8 @@ permissions:
 
 # 影響する製品のテストだけを動かす。飛ばすときは、ワークフローの paths ではなくジョブの if で飛ばす
 # （if で飛ばしたジョブは必須チェックでも成功の扱いになるが、ワークフローごと動かないとチェックが待ちのまま残る）。
-# 判定のジョブが失敗したときは、念のためすべて動かす。
+# テストは、今のマージ先の先頭と PR の先頭とのマージコミットで動かす（判定のジョブが待って決める）。
+# 判定のジョブが成功しなかったとき（失敗・取り消し）は、テストのジョブを失敗にする（Re-run で決め直す）。
 jobs:
   changes:
     name: find affected products
@@ -19,12 +20,31 @@ jobs:
       contents: read
       pull-requests: read # paths-filter が PR の変更ファイルを API で取る
     outputs:
+      sha: ${{ steps.merge.outputs.sha }}
       matched: ${{ steps.paths.outputs.changes }}
       all_products: ${{ steps.affected.outputs.all_products }}
       scripts: ${{ steps.affected.outputs.scripts }}
     steps:
+      # マージ先を変えた直後でも今のマージ先でテストするよう、今のマージ先とのマージコミットができるまで待つ
+      # （.github/scripts/merge-commit.js。ラベルのチェックと同じ）。待つスクリプトを読むためだけに、先に別の場所に取る
       - uses: actions/checkout@v7
         with:
+          path: .wait-scripts
+          sparse-checkout: .github/scripts
+          persist-credentials: false
+
+      - name: Wait for the merge commit with the current base
+        id: merge
+        uses: actions/github-script@v9
+        with:
+          retries: 3 # GitHub API の一時的なエラー（5xx）はやり直す
+          script: |
+            const { waitForMergeCommit } = require('./.wait-scripts/.github/scripts/merge-commit.js')
+            await waitForMergeCommit({ github, context, core })
+
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ steps.merge.outputs.sha }}
           persist-credentials: false
 
       # 影響する製品は、ラベルのチェックと同じ設定（.github/product-paths.yml）で決める。
@@ -68,11 +88,18 @@ jobs:
   unit-test-product-a:
     name: unit test for product-a
     needs: changes
-    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.all_products == 'true' || contains(needs.changes.outputs.matched, '"product-a"')) }}
+    if: ${{ always() && (needs.changes.result != 'success' || needs.changes.outputs.all_products == 'true' || contains(needs.changes.outputs.matched, '"product-a"')) }}
     runs-on: ubuntu-latest
     steps:
+      - name: Stop when the tests to run could not be decided
+        # 取り消された実行でも動くよう always() を付ける（付けないと、このステップが飛ばされてテストが成功の扱いになる）
+        if: ${{ always() && needs.changes.result != 'success' }}
+        run: |
+          echo "::error::どのテストを動かすかを決められませんでした（find affected products が ${{ needs.changes.result }}）。Re-run してください。"
+          exit 1
       - uses: actions/checkout@v7
         with:
+          ref: ${{ needs.changes.outputs.sha }}
           persist-credentials: false
       - name: Run tests
         run: test ! -e ProductA/FAIL
@@ -80,11 +107,18 @@ jobs:
   unit-test-product-b:
     name: unit test for product-b
     needs: changes
-    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.all_products == 'true' || contains(needs.changes.outputs.matched, '"product-b"')) }}
+    if: ${{ always() && (needs.changes.result != 'success' || needs.changes.outputs.all_products == 'true' || contains(needs.changes.outputs.matched, '"product-b"')) }}
     runs-on: ubuntu-latest
     steps:
+      - name: Stop when the tests to run could not be decided
+        # 取り消された実行でも動くよう always() を付ける（付けないと、このステップが飛ばされてテストが成功の扱いになる）
+        if: ${{ always() && needs.changes.result != 'success' }}
+        run: |
+          echo "::error::どのテストを動かすかを決められませんでした（find affected products が ${{ needs.changes.result }}）。Re-run してください。"
+          exit 1
       - uses: actions/checkout@v7
         with:
+          ref: ${{ needs.changes.outputs.sha }}
           persist-credentials: false
       - name: Run tests
         run: test ! -e ProductB/FAIL
@@ -93,11 +127,18 @@ jobs:
   script-test:
     name: script test
     needs: changes
-    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.scripts == 'true') }}
+    if: ${{ always() && (needs.changes.result != 'success' || needs.changes.outputs.scripts == 'true') }}
     runs-on: ubuntu-latest
     steps:
+      - name: Stop when the tests to run could not be decided
+        # 取り消された実行でも動くよう always() を付ける（付けないと、このステップが飛ばされてテストが成功の扱いになる）
+        if: ${{ always() && needs.changes.result != 'success' }}
+        run: |
+          echo "::error::どのテストを動かすかを決められませんでした（find affected products が ${{ needs.changes.result }}）。Re-run してください。"
+          exit 1
       - uses: actions/checkout@v7
         with:
+          ref: ${{ needs.changes.outputs.sha }}
           persist-credentials: false
       - name: Run tests
         run: node --test .github/scripts/release-labels.test.js .github/scripts/products.test.js
