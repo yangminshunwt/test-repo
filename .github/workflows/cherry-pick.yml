@@ -68,8 +68,6 @@ jobs:
     permissions:
       contents: read
       pull-requests: write # 失敗を元の PR へコメントする（App のトークンを作れなかったときも知らせるため GITHUB_TOKEN で）
-    env:
-      TARGETS: ${{ needs.targets.outputs.all_branches }}
     steps:
       # スクリプト用。途中のステップが失敗しても失敗を知らせられるよう、最初に取る
       - uses: actions/checkout@v7
@@ -137,7 +135,7 @@ jobs:
         if: ${{ !cancelled() && steps.app-token.outcome == 'success' }}
         uses: actions/github-script@v9
         env:
-          TARGETS: ${{ steps.pending.outputs.targets }} # 決め直した行き先（リリース済みの行き先は除いてある）
+          TARGETS: ${{ steps.pending.outputs.targets }} # 今の状態で決め直した行き先
         with:
           retries: 3 # GitHub API の一時的なエラー（5xx）はやり直す
           github-token: ${{ steps.app-token.outputs.token }}

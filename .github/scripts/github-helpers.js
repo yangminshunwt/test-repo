@@ -49,7 +49,8 @@ async function listReleaseBranches(github, repo) {
 // PR が見つからなかったコミットは unmatched で返す（黙って飛ばさない）。
 // 「このコミットを含む PR」の API はマージの直後には反映されていないことがあるので、まずマージした PR の一覧と突き合わせる。
 // 一覧はページ送りの間に PR が更新されると並びがずれて見落とすことがあるので、残ったコミットは 1 つずつ確かめ直す
-// （squash のコミットの件名の末尾の (#番号) の PR を取り、マージコミットとマージ先が合っているかを確かめる）。
+// （squash のコミットの件名の末尾の (#番号) か、マージコミットの件名の Merge pull request #番号 の PR を取り、マージコミットとマージ先が
+// 合っているかを確かめる。番号がなければ「このコミットを含む PR」の API で探す）。
 async function mergedPullsForCommits(github, repo, shas, base) {
   const wanted = new Set(shas);
   const pulls = new Map();
@@ -63,18 +64,25 @@ async function mergedPullsForCommits(github, repo, shas, base) {
     if (wanted.size === 0) done();
     return [];
   });
+  const matches = (pull) => pull.merged_at && pull.merge_commit_sha !== null && accepts(pull.base.ref);
   for (const sha of [...wanted]) {
     const { data: commit } = await github.rest.git.getCommit({ ...repo, commit_sha: sha });
-    const number = /\(#(\d+)\)$/.exec(commit.message.split('\n')[0])?.[1];
-    if (!number) continue;
-    let pull;
-    try {
-      ({ data: pull } = await github.rest.pulls.get({ ...repo, pull_number: Number(number) }));
-    } catch (error) {
-      if (error.status === 404) continue; // (#番号) が PR ではなかった（Issue など）
-      throw error;
+    const subject = commit.message.split('\n')[0];
+    const number = (/\(#(\d+)\)$/.exec(subject) ?? /^Merge pull request #(\d+) from /.exec(subject))?.[1];
+    let pull = null;
+    if (number) {
+      try {
+        pull = (await github.rest.pulls.get({ ...repo, pull_number: Number(number) })).data;
+      } catch (error) {
+        if (error.status !== 404) throw error; // 404 は、(#番号) が PR ではなかった（Issue など）
+      }
     }
-    if (pull.merged_at && pull.merge_commit_sha === sha && accepts(pull.base.ref)) {
+    if (!(pull && matches(pull) && pull.merge_commit_sha === sha)) {
+      // 件名を書き換えてマージした PR などは、「このコミットを含む PR」の API で探す（それでも見つからなければ unmatched として返し、呼び出し元で止める）
+      const { data } = await github.rest.repos.listPullRequestsAssociatedWithCommit({ ...repo, commit_sha: sha, per_page: 100 });
+      pull = data.find((candidate) => matches(candidate) && candidate.merge_commit_sha === sha) ?? null;
+    }
+    if (pull) {
       wanted.delete(sha);
       pulls.set(pull.number, pull);
     }

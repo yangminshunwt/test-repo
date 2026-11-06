@@ -207,7 +207,7 @@ function guideForLateChanges(pulls) {
   if (picks.length > 0) {
     const originals = picks.map(({ original }) => `#${original}`).join('、');
     guides.push(
-      `cherry-pick で入った変更（${prList(picks.map(({ pull }) => pull))}）は、修正フェーズのブランチを作ったあと、元の PR（${originals}）を Cherry-Pick の Run workflow でやり直してください。`,
+      `cherry-pick で入った変更（${prList(picks.map(({ pull }) => pull))}）は、修正フェーズのブランチを作ったあと、元の PR（${originals}）のリリースラベルをそのブランチのバージョンに付け替えて、Cherry-Pick の Run workflow でやり直してください。`,
     );
   }
   if (direct.length > 0) {
@@ -258,13 +258,22 @@ async function release({ github, context, core }) {
     await createTag(github, repo, plan.releaseTag, target, `${plan.product} ${plan.version}`);
     results.push(`rc タグがないので、${branch} の先頭（${target.slice(0, 7)}）に ${plan.releaseTag} を打ちました。`);
   }
-  // アーカイブしたラベルは付け直せないので、付け直しはアーカイブより先にする
-  results.push(...(await recheckLabeledPulls(github, core, repo, plan.releaseTag)));
-  results.push(await archiveReleaseLabel(github, core, repo, plan.releaseTag));
+  const problems = [];
+  // アーカイブしたラベルは付け直せないので、付け直しはアーカイブより先にする。ラベルのチェックをやり直させられなかった PR が
+  // あれば、アーカイブもブランチの削除もせずに止める（やり直したとき、もう一度その PR のチェックをやり直させるため）
+  const recheck = await recheckLabeledPulls(github, core, repo, plan.releaseTag);
+  results.push(...recheck.lines);
+  if (recheck.unchecked.length > 0) {
+    problems.push(
+      `${prList(recheck.unchecked)} からラベル ${plan.releaseTag} を外せず、ラベルのチェックをやり直させられませんでした。` +
+        'ラベルのアーカイブとブランチの削除はしていません。実行し直してください。',
+    );
+  } else {
+    results.push(await archiveReleaseLabel(github, core, repo, plan.releaseTag));
+  }
 
   // ブランチを消す前に、このリリースに入っていないものが残っていないかを確かめる。残っていれば消さずに止める
   // （消すと、そのブランチへの PR は黙って閉じられ、その変更がどのリリースにも入らなくなる）
-  const problems = [];
   const head = (await github.rest.git.getRef({ ...repo, ref: `heads/${branch}` })).data.object.sha;
   let late = { pulls: [], unmatched: [] };
   if (head !== target) {
@@ -283,20 +292,21 @@ async function release({ github, context, core }) {
     const missing = { missing: found.missing.filter((pull) => !lateOriginals.has(pull.number)), unmatched: found.unmatched };
     if (missing.missing.length > 0 || missing.unmatched.length > 0) problems.push(missingError(branch, missing, { afterRelease: true }));
   }
-  // この一覧を取った時刻（GitHub の時計）。消したあと、これより後に閉じられた PR を探すのに使う
-  let checkedAt = null;
-  const open = await github.paginate(github.rest.pulls.list, { ...repo, state: 'open', base: branch, per_page: 100 }, (response) => {
-    checkedAt ??= Date.parse(response.headers.date);
-    return response.data;
+  // このブランチに向けた PR と、このブランチから出した PR（リリースブランチを main に戻す PR など）。どちらもブランチを消すと閉じられる。
+  // 消したあとに比べるため、確かめた時点の PR ごとの閉じた時刻（GitHub の記録）を覚えておく
+  const pullsOf = async () => ({
+    to: await github.paginate(github.rest.pulls.list, { ...repo, state: 'all', base: branch, per_page: 100 }),
+    from: await github.paginate(github.rest.pulls.list, { ...repo, state: 'all', head: `${repo.owner}:${branch}`, per_page: 100 }),
   });
-  // このブランチから出した PR（リリースブランチを main に戻す PR など）も、ブランチを消すと閉じられる
-  const fromBranch = await github.paginate(github.rest.pulls.list, { ...repo, state: 'open', head: `${repo.owner}:${branch}`, per_page: 100 });
-  if (fromBranch.length > 0) {
-    problems.push(`${branch} から出した PR がまだ開いています（${prList(fromBranch)}）。ブランチを消すと閉じられるので、消していません。マージするか閉じてから実行し直してください。`);
+  const checked = await pullsOf();
+  const openTo = checked.to.filter((pull) => pull.state === 'open');
+  const openFrom = checked.from.filter((pull) => pull.state === 'open');
+  if (openFrom.length > 0) {
+    problems.push(`${branch} から出した PR がまだ開いています（${prList(openFrom)}）。ブランチを消すと閉じられるので、消していません。マージするか閉じてから実行し直してください。`);
   }
-  if (open.length > 0) {
+  if (openTo.length > 0) {
     problems.push(
-      `${branch} に向けた PR がまだ開いています（${prList(open)}）。今回のリリースには入っていないので、ブランチは消していません。` +
+      `${branch} に向けた PR がまだ開いています（${prList(openTo)}）。今回のリリースには入っていないので、ブランチは消していません。` +
         'cherry-pick の PR なら、元の PR のリリースラベルをこのブランチより新しいバージョンに付け替えてから閉じてください。' +
         'それ以外の PR も閉じてください。入れる変更なら、ブランチが消えたあと Hotfix Preparation で作るブランチに出し直してください。そのあと実行し直してください。',
     );
@@ -311,16 +321,25 @@ async function release({ github, context, core }) {
     }
     if (deleted) {
       results.push(`${branch} を削除しました。`);
-      // 確かめてから消すまでの間に開かれた PR は、削除で閉じられる（閉じるのが遅れて、まだ開いていることもある）。あれば知らせる
-      const touched = [
-        ...(await github.paginate(github.rest.pulls.list, { ...repo, state: 'all', base: branch, per_page: 100 })),
-        ...(await github.paginate(github.rest.pulls.list, { ...repo, state: 'all', head: `${repo.owner}:${branch}`, per_page: 100 })),
-      ];
-      const left = touched.filter((pull) => !pull.merged_at && (pull.state === 'open' || Date.parse(pull.closed_at) >= checkedAt));
-      if (left.length > 0) {
+      // 確かめたときには開いていなかった（なかったか、閉じていた）のに、そのあと開かれたか開き直された PR を探す。
+      // 確かめたときに開いていた PR があれば消していないので、確かめたときから閉じた時刻が変わった PR か、まだ開いている PR がそれにあたる
+      const closedAt = new Map([...checked.to, ...checked.from].map((pull) => [pull.number, pull.closed_at]));
+      const after = await pullsOf();
+      const reopened = (pulls) => pulls.filter((pull) => !pull.merged_at && (pull.state === 'open' || closedAt.get(pull.number) !== pull.closed_at));
+      const lateTo = reopened(after.to);
+      const lateFrom = reopened(after.from);
+      if (lateTo.length > 0) {
         problems.push(
-          `確かめてから消すまでの間に開かれた PR（${prList(left)}）は、ブランチの削除で閉じられます。今回のリリースには入っていません。` +
-            '入れる変更なら、Hotfix Preparation でブランチを作ったあと、cherry-pick の PR なら元の PR を Cherry-Pick の Run workflow でやり直し、それ以外はそのブランチに PR を出し直してください。',
+          `確かめたあとに開かれた（開き直された）${branch} に向けた PR（${prList(lateTo)}）があり、マージされないままブランチを消しました。` +
+            'これらの PR は閉じられ、今回のリリースには入っていません。入れる変更なら、Hotfix Preparation でブランチを作ったあと、' +
+            'cherry-pick の PR なら元の PR のリリースラベルをそのブランチのバージョンに付け替えて Cherry-Pick の Run workflow でやり直し、' +
+            'それ以外はそのブランチに PR を出し直してください。',
+        );
+      }
+      if (lateFrom.length > 0) {
+        problems.push(
+          `確かめたあとに開かれた（開き直された）${branch} から出した PR（${prList(lateFrom)}）があり、ブランチを消したので閉じられます。` +
+            `ブランチの中身は ${plan.releaseTag} と同じです。必要なら、タグ ${plan.releaseTag} からブランチを作って PR を出し直してください。`,
         );
       }
     }
@@ -331,26 +350,29 @@ async function release({ github, context, core }) {
 
 // リリースしたバージョンのラベルが付いた開いている PR は、ラベルを付け直して、ラベルのチェックをやり直させる
 // （リリースしてもイベントは起きないので、前の成功のままマージできてしまう。やり直すとリリース済みのラベルとして止まる）
+// 戻り値：{ lines（結果）, unchecked（ラベルを外せず、チェックをやり直させられなかった PR） }
 async function recheckLabeledPulls(github, core, repo, label) {
-  // アーカイブしたラベルは付け直せない。アーカイブ済みなら、アーカイブした実行がその前にやり直させている
+  const none = { lines: [], unchecked: [] };
+  // アーカイブしたラベルは付け直せない。アーカイブするのは、すべての PR のチェックをやり直させたあとだけ
   try {
-    if ((await github.rest.issues.getLabel({ ...repo, name: label })).data.archived_at) return [];
+    if ((await github.rest.issues.getLabel({ ...repo, name: label })).data.archived_at) return none;
   } catch (error) {
     if (error.status !== 404) throw error;
-    return [];
+    return none;
   }
   const pulls = (await github.paginate(github.rest.issues.listForRepo, { ...repo, labels: label, state: 'open', per_page: 100 })).filter(
     (issue) => issue.pull_request,
   );
-  if (pulls.length === 0) return [];
-  const failed = [];
+  if (pulls.length === 0) return none;
+  const unchecked = [];
+  const unlabeled = [];
   for (const pull of pulls) {
     try {
       await github.rest.issues.removeLabel({ ...repo, issue_number: pull.number, name: label });
     } catch (error) {
       // ほかの人が先に外していれば、そのイベントでラベルのチェックはやり直される
       if (error.status === 404) continue;
-      failed.push(pull);
+      unchecked.push(pull);
       core.warning(`#${pull.number} からラベル ${label} を外せませんでした（${error.message}）。`);
       continue;
     }
@@ -358,13 +380,13 @@ async function recheckLabeledPulls(github, core, repo, label) {
       await github.rest.issues.addLabels({ ...repo, issue_number: pull.number, labels: [label] });
     } catch (error) {
       // 付け直せなくても、外したことでラベルのチェックはやり直される（ラベルがないとして止まる）
-      failed.push(pull);
+      unlabeled.push(pull);
       core.warning(`#${pull.number} にラベル ${label} を付け直せませんでした（${error.message}）。外したままです。`);
     }
   }
   const lines = [`ラベル ${label} が付いた開いている PR（${prList(pulls)}）は、ラベルを付け直してラベルのチェックをやり直させました（リリース済みのラベルとして止まります）。`];
-  if (failed.length > 0) lines.push(`そのうち ${prList(failed)} は、ラベルを外したり付け直したりできませんでした。ラベルのチェックが止まっているかを確かめてください。`);
-  return lines;
+  if (unlabeled.length > 0) lines.push(`そのうち ${prList(unlabeled)} は、ラベルを付け直せず、外したままです（ラベルのチェックは、ラベルがないとして止まります）。`);
+  return { lines, unchecked };
 }
 
 module.exports = { releaseCandidate, release };
