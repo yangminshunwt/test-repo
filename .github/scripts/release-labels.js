@@ -156,17 +156,14 @@ function checkReleaseLabels({ baseBranch, labels, affectedProducts, versionFile,
     labelsByProduct.set(releaseLabel.product, list);
   }
 
-  if (allReleaseLabels.length === 0 && requiredProducts.length === 0) {
-    errors.push('リリースラベルが付いていません。');
-  }
   for (const product of requiredProducts) {
     if (!labelsByProduct.has(product)) {
       errors.push(`${product} に影響する変更ですが、${product} のリリースラベルが付いていません。`);
     }
   }
   // 影響しない製品のラベルは止める（古いバージョンなら、関係のない変更がその製品のリリースブランチに cherry-pick される）。
-  // どの製品にも影響しない変更（docs だけなど）は、ラベルが 1 つ要るので、どの製品のラベルでもよい。
-  if (!release && requiredProducts.length > 0) {
+  // どの製品にも影響しない変更（docs や自動化だけなど）には、リリースラベルは付けない。
+  if (!release) {
     for (const product of labelsByProduct.keys()) {
       if (!requiredProducts.includes(product)) {
         errors.push(
