@@ -1,0 +1,93 @@
+name: Release label check
+
+on:
+  pull_request:
+    branches:
+      - main
+      - 'release/**'
+    # ラベルの付け外しやマージ先の変更でもチェックし直す
+    types: [opened, synchronize, reopened, edited, labeled, unlabeled]
+
+# concurrency で前の実行を取り消すことはしない。PR の作成とラベルの追加のように続けて起きたイベントで、
+# あとに作られた実行のほうが取り消されると、その結果（取り消し）が必須チェックに使われてマージできなくなるため。
+# どの実行もその時点のラベルを取り直して判定するので、取り消さなくても最後に作られた実行の結果が正しくなる。
+
+permissions:
+  contents: read
+
+jobs:
+  release-label-check:
+    name: release label check
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: read
+      pull-requests: read
+    steps:
+      # マージ先を変えた（edited）直後は、GitHub がテスト用のマージコミットを作り直す前にこの実行が始まり、
+      # イベントのマージコミットが前のマージ先とのマージのままのことがある。そのまま判定すると、前のマージ先の
+      # VERSION と比べてしまう。今のマージ先の先頭と PR の先頭とのマージコミットができるまで待ち、それで判定する。
+      - name: Wait for the merge commit with the current base
+        id: merge
+        uses: actions/github-script@v9
+        with:
+          retries: 3 # GitHub API の一時的なエラー（5xx）はやり直す
+          script: |
+            const repo = context.repo;
+            const pull_number = context.payload.pull_request.number;
+            for (let attempt = 0; attempt < 30; attempt++) {
+              const { data: pr } = await github.rest.pulls.get({ ...repo, pull_number });
+              if (pr.state !== 'open') {
+                // 閉じた PR（マージ後にラベルを直したときなど）はマージコミットが作り直されないので待たない。
+                // マージ済みなら、実際にマージしたコミットで判定する
+                core.setOutput('sha', pr.merged ? pr.merge_commit_sha : context.sha);
+                core.setOutput('base_ref', pr.base.ref);
+                core.setOutput('changed_files', pr.changed_files);
+                return;
+              }
+              if (pr.mergeable === false) {
+                core.setFailed(`${pr.base.ref} とコンフリクトしています。解消して push すると、もう一度チェックします。`);
+                return;
+              }
+              if (pr.mergeable && pr.merge_commit_sha) {
+                const { data: base } = await github.rest.repos.getBranch({ ...repo, branch: pr.base.ref });
+                const { data: merge } = await github.rest.git.getCommit({ ...repo, commit_sha: pr.merge_commit_sha });
+                const parents = merge.parents.map((parent) => parent.sha);
+                if (parents[0] === base.commit.sha && parents[1] === pr.head.sha) {
+                  core.setOutput('sha', pr.merge_commit_sha);
+                  core.setOutput('base_ref', pr.base.ref);
+                  core.setOutput('changed_files', pr.changed_files);
+                  return;
+                }
+              }
+              core.info(`今のマージ先（${pr.base.ref}）とのマージコミットができるのを待っています（${attempt + 1} 回目）。`);
+              await new Promise((resolve) => setTimeout(resolve, 5000));
+            }
+            core.setFailed('今のマージ先とのマージコミットを GitHub から取れませんでした。しばらくしてから Re-run してください。');
+
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ steps.merge.outputs.sha }}
+          # マージ前の VERSION を読むため、マージコミットの親まで取る
+          fetch-depth: 2
+          persist-credentials: false
+
+      - name: Find affected products
+        id: products
+        uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
+        with:
+          filters: .github/product-paths.yml
+
+      - name: Check release labels
+        uses: actions/github-script@v9
+        env:
+          BASE_REF: ${{ steps.merge.outputs.base_ref }}
+          CHANGED_FILES: ${{ steps.merge.outputs.changed_files }}
+          AFFECTED_PRODUCTS: ${{ steps.products.outputs.changes }}
+          ALL_FILE_COUNT: ${{ steps.products.outputs.all_count }}
+          LISTED_FILE_COUNT: ${{ steps.products.outputs.listed_count }}
+        with:
+          retries: 3 # GitHub API の一時的なエラー（5xx）はやり直す
+          script: |
+            const run = require('./.github/scripts/release-label-check.js')
+            await run({ github, context, core })
