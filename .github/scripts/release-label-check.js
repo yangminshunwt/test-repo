@@ -25,7 +25,7 @@ module.exports = async ({ github, context, core }) => {
 
   // チェックアウトされているのは PR をマージした結果のコミットで、その第 1 親がマージ前のマージ先になる。
   const versionFile = fs.readFileSync('VERSION', 'utf8');
-  // 自動化を入れる前のタグから作ったリリースブランチには VERSION がないことがあるので、そのときは空とみなす
+  // マージ先に VERSION がない（手で作ったブランチなど）ときは、空とみなす
   let baseVersionFile = '';
   try {
     baseVersionFile = execFileSync('git', ['show', 'HEAD^1:VERSION'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });

@@ -33,9 +33,16 @@ async function prepare({ github, context, core }) {
     );
   }
 
-  // タグの VERSION は、その製品の行がタグのバージョンと同じでなければならない（自動化を入れる前のタグには VERSION がない）
+  // リリースブランチの自動化（.github）は、タグのものをそのまま使う。自動化を入れる前のタグから作ると、
+  // そのブランチへの PR は必須チェックが動かずにマージできないので、作る前に止める
   const tagVersionFile = await readFile(github, repo, 'VERSION', sha);
-  if (tagVersionFile !== null && parseVersionFile(tagVersionFile)[product] !== plan.releasedVersion) {
+  if (tagVersionFile === null || (await readFile(github, repo, '.github/workflows/release-label-check.yml', sha)) === null) {
+    return core.setFailed(
+      `${plan.releasedTag} は自動化を入れる前のタグ（VERSION か .github/workflows/release-label-check.yml がない）なので、修正フェーズのブランチは作りません。そのブランチへの PR は必須チェックが動かず、マージできないためです。`,
+    );
+  }
+  // タグの VERSION は、その製品の行がタグのバージョンと同じでなければならない
+  if (parseVersionFile(tagVersionFile)[product] !== plan.releasedVersion) {
     return core.setFailed(`${plan.releasedTag} のコミットの VERSION の ${product} が ${plan.releasedVersion} ではありません。タグの位置を確かめてください。`);
   }
 
@@ -44,7 +51,7 @@ async function prepare({ github, context, core }) {
     const { data: compare } = await github.rest.repos.compareCommitsWithBasehead({ ...repo, basehead: `${sha}...${plan.releaseBranch}` });
     const branchVersionFile = await readFile(github, repo, 'VERSION', plan.releaseBranch);
     const branchVersion = branchVersionFile === null ? null : parseVersionFile(branchVersionFile)[product];
-    const fromTag = compare.behind_by === 0 && (branchVersionFile === null || [plan.releasedVersion, plan.nextVersion].includes(branchVersion));
+    const fromTag = compare.behind_by === 0 && [plan.releasedVersion, plan.nextVersion].includes(branchVersion);
     if (!fromTag) {
       return core.setFailed(`${plan.releaseBranch} はすでにありますが、${plan.releasedTag} から作られたものではないようです。管理者に削除してもらってから、実行し直してください。`);
     }
@@ -53,22 +60,18 @@ async function prepare({ github, context, core }) {
   const branch = await createReleaseBranch({ github, core, repo, branch: plan.releaseBranch, sha });
   if (!branch) return;
   const results = [branch.result, await createReleaseLabel({ github, repo, label: plan.nextLabel })];
-  const notes = tagVersionFile === null ? [`${plan.releasedTag} には VERSION がないので、main の VERSION をもとに作っています。`] : [];
 
-  await report(core, `${product} の修正フェーズの準備（${plan.releasedTag} → ${plan.nextVersion}）`, [...results, ...notes]);
+  await report(core, `${product} の修正フェーズの準備（${plan.releasedTag} → ${plan.nextVersion}）`, results);
   core.setOutput('released_tag', plan.releasedTag);
   core.setOutput('next_version', plan.nextVersion);
   core.setOutput('release_branch', plan.releaseBranch);
   core.setOutput('next_label', plan.nextLabel);
-  core.setOutput('notes', notes.map((note) => `- ${note}`).join('\n'));
 }
 
 // リリースブランチの作業場所（RELEASE_WORK）の VERSION を、次のバージョンに書き換える。
-// 自動化を入れる前のタグから作ったブランチで VERSION がなければ、main の VERSION をもとに作る。
 function bumpVersion() {
   const file = path.join(process.env.RELEASE_WORK, 'VERSION');
-  const current = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : fs.readFileSync('VERSION', 'utf8');
-  fs.writeFileSync(file, setVersion(current, process.env.PRODUCT, process.env.NEXT_VERSION));
+  fs.writeFileSync(file, setVersion(fs.readFileSync(file, 'utf8'), process.env.PRODUCT, process.env.NEXT_VERSION));
 }
 
 module.exports = { prepare, bumpVersion };
