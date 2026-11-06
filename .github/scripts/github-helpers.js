@@ -45,16 +45,68 @@ async function listReleaseBranches(github, repo) {
   return refs.map((ref) => ref.ref.replace(/^refs\/heads\//, ''));
 }
 
-// base にマージされた PR のうち、shas のどれかのコミットを含むものを返す（同じ PR は 1 つにまとめる）
-async function mergedPullsOf(github, repo, shas, base) {
+// base に squash でマージされた PR のうち、マージコミットが shas にあるものを pulls で返す。
+// PR が見つからなかったコミットは unmatched で返す（黙って飛ばさない）。
+// 「このコミットを含む PR」の API はマージの直後には反映されていないことがあるので、まずマージした PR の一覧と突き合わせる。
+// 一覧はページ送りの間に PR が更新されると並びがずれて見落とすことがあるので、残ったコミットは 1 つずつ確かめ直す
+// （squash のコミットの件名の末尾の (#番号) の PR を取り、マージコミットとマージ先が合っているかを確かめる）。
+async function mergedPullsForCommits(github, repo, shas, base) {
+  const wanted = new Set(shas);
   const pulls = new Map();
-  for (const sha of shas) {
-    const { data } = await github.rest.repos.listPullRequestsAssociatedWithCommit({ ...repo, commit_sha: sha });
-    for (const pull of data) {
-      if (pull.merged_at && pull.base.ref === base) pulls.set(pull.number, pull);
+  if (wanted.size === 0) return { pulls: [], unmatched: [] };
+  await github.paginate(github.rest.pulls.list, { ...repo, state: 'closed', base, sort: 'updated', direction: 'desc', per_page: 100 }, (response, done) => {
+    for (const pull of response.data) {
+      if (pull.merged_at && wanted.delete(pull.merge_commit_sha)) pulls.set(pull.number, pull);
+    }
+    if (wanted.size === 0) done();
+    return [];
+  });
+  for (const sha of [...wanted]) {
+    const { data: commit } = await github.rest.git.getCommit({ ...repo, commit_sha: sha });
+    const number = /\(#(\d+)\)$/.exec(commit.message.split('\n')[0])?.[1];
+    if (!number) continue;
+    const { data: pull } = await github.rest.pulls.get({ ...repo, pull_number: Number(number) });
+    if (pull.merged_at && pull.merge_commit_sha === sha && pull.base.ref === base) {
+      wanted.delete(sha);
+      pulls.set(pull.number, pull);
     }
   }
-  return [...pulls.values()];
+  return { pulls: [...pulls.values()], unmatched: [...wanted] };
+}
+
+// basehead（a...b）の比較で、b にあって a にないコミットの SHA をすべて返す（1 回の応答では取り切れないことがあるので、ページを分けて取る）
+async function compareShas(github, repo, basehead) {
+  const shas = [];
+  for (let page = 1; ; page++) {
+    const { data } = await github.rest.repos.compareCommitsWithBasehead({ ...repo, basehead, per_page: 100, page });
+    shas.push(...data.commits.map((commit) => commit.sha));
+    if (data.commits.length === 0 || shas.length >= data.total_commits) return shas;
+  }
+}
+
+// ブランチを、先頭が sha のときだけ消す（確かめてから消すまでの間に、ブランチにマージがあれば消さない）。消せたら true。
+async function deleteBranchIfAt(github, repo, branch, sha) {
+  const { data } = await github.rest.repos.get(repo);
+  try {
+    await github.graphql(
+      `mutation($id: ID!, $name: GitRefname!, $before: GitObjectID!) {
+        updateRefs(input: { repositoryId: $id, refUpdates: [{ name: $name, beforeOid: $before, afterOid: "0000000000000000000000000000000000000000" }] }) { clientMutationId }
+      }`,
+      { id: data.node_id, name: `refs/heads/${branch}`, before: sha },
+    );
+    return true;
+  } catch (error) {
+    // 先頭が変わっていれば消えない（エラーになる）。そのときは false、ほかの理由で消せなかったならそのまま投げる
+    if (!(await branchExists(github, repo, branch))) return true;
+    const { data: ref } = await github.rest.git.getRef({ ...repo, ref: `heads/${branch}` });
+    if (ref.object.sha !== sha) return false;
+    throw error;
+  }
+}
+
+// PR の作者とマージした人へのメンション（@a @b）
+function mentionsOf(pr) {
+  return [...new Set([pr.user?.login, pr.merged_by?.login].filter(Boolean))].map((login) => `@${login}`).join(' ');
 }
 
 // タグ（refs/tags/... の ref）が指すコミットを返す（注釈付きタグが入れ子になっていても、コミットまでたどる）
@@ -72,4 +124,4 @@ async function report(core, heading, lines) {
   await core.summary.addHeading(heading, 3).addList(lines).write();
 }
 
-module.exports = { branchExists, labelExists, listReleaseBranches, mergedPullsOf, prList, readFile, report, tagCommit };
+module.exports = { branchExists, compareShas, deleteBranchIfAt, labelExists, listReleaseBranches, mentionsOf, mergedPullsForCommits, prList, readFile, report, tagCommit };

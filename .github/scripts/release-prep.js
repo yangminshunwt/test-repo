@@ -3,9 +3,9 @@
 
 const { execFileSync } = require('child_process');
 const fs = require('fs');
-const { mergedPullsOf, prList, report } = require('./github-helpers.js');
+const { compareShas, mergedPullsForCommits, prList, report } = require('./github-helpers.js');
 const { createReleaseBranch, createReleaseLabel } = require('./release-branch.js');
-const { planReleasePrep, setVersion } = require('./release-labels.js');
+const { compareVersions, extractReleaseLabels, parseReleaseBranch, planReleasePrep, setVersion } = require('./release-labels.js');
 
 // リリースブランチと次のバージョンのリリースラベルを作り、作業場所の VERSION を次のバージョンに書き換える。
 // やり直したときも続きから進められるよう、すでにあるブランチやラベルはそのまま使う。
@@ -38,22 +38,32 @@ async function prepare({ github, context, core }) {
   core.setOutput('next_version', plan.nextVersion);
   core.setOutput('release_branch', plan.releaseBranch);
   core.setOutput('next_label', plan.nextLabel);
-  core.setOutput('created_from', branch.created ? sha : '');
 }
 
-// リリースブランチを作ったコミット（CREATED_FROM）より後に main にマージされた PR の cherry-pick をやり直す。
-// チェックアウトしてからブランチを作るまでの間にマージされた PR は、cherry-pick の時点でブランチがなかったかもしれないため。
+// リリースブランチが main から分かれたところより後に main にマージされた PR のうち、このブランチに cherry-pick するはずのもの
+// （この製品のラベルのバージョンがこのブランチのバージョン以下）の cherry-pick をやり直す。ブランチを作るまでの間にマージされた PR は、
+// cherry-pick の時点でブランチがなかったかもしれないため。やり直し（ブランチがもうあったとき）でも、分かれたところから同じように確かめる。
 // cherry-pick.yml は作成済みの行き先を飛ばすので、もう入っている PR をやり直しても重ならない。
 async function catchUpCherryPicks({ github, context, core }) {
   const repo = context.repo;
-  const createdFrom = process.env.CREATED_FROM;
-  if (!createdFrom) return;
-  const { data: main } = await github.rest.repos.getBranch({ ...repo, branch: 'main' });
-  if (main.commit.sha === createdFrom) return;
-  const { data: compare } = await github.rest.repos.compareCommitsWithBasehead({ ...repo, basehead: `${createdFrom}...${main.commit.sha}` });
-  for (const pull of await mergedPullsOf(github, repo, compare.commits.map((commit) => commit.sha), 'main')) {
+  const branch = process.env.RELEASE_BRANCH;
+  const release = parseReleaseBranch(branch);
+  const shas = await compareShas(github, repo, `${branch}...main`);
+  const { pulls, unmatched } = await mergedPullsForCommits(github, repo, shas, 'main');
+  for (const pull of pulls) {
+    const { releaseLabels } = extractReleaseLabels(
+      pull.labels.map((label) => label.name),
+      [release.product],
+    );
+    if (!releaseLabels.some(({ version }) => compareVersions(version, release.version) <= 0)) continue;
     await github.rest.actions.createWorkflowDispatch({ ...repo, workflow_id: 'cherry-pick.yml', ref: 'main', inputs: { pr_number: String(pull.number) } });
-    core.info(`ブランチを作る間に main にマージされた #${pull.number} の cherry-pick をやり直しました。`);
+    core.info(`${branch} が main から分かれたあとにマージされた #${pull.number} の cherry-pick をやり直しました。`);
+  }
+  if (unmatched.length > 0) {
+    core.setFailed(
+      `main の、${branch} が分かれたあとのコミットのうち、マージした PR が見つからないものがあります（${unmatched.map((sha) => sha.slice(0, 7)).join('、')}）。` +
+        `${branch} に cherry-pick が要る変更かを確かめてください（VERSION を上げる PR は作ってあります。この実行はやり直しても重なりません）。`,
+    );
   }
 }
 

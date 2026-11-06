@@ -22,6 +22,12 @@ permissions:
 env:
   PR_NUMBER: ${{ inputs.pr_number || github.event.pull_request.number }}
 
+# 同じ PR の実行は順番に処理する（重なると、もう一方が作ったばかりのブランチを消してしまう）。
+# 待っている実行が後の実行に置き換えられても、後の実行が今の状態から決め直すので困らない（必須チェックでもない）
+concurrency:
+  group: cherry-pick-${{ inputs.pr_number || github.event.pull_request.number }}
+  cancel-in-progress: false
+
 jobs:
   targets:
     name: find cherry-pick targets
@@ -44,6 +50,15 @@ jobs:
           script: |
             const { findTargets } = require('./.github/scripts/cherry-pick.js')
             await findTargets({ github, context, core })
+
+      - name: Report a failure
+        if: ${{ failure() }}
+        uses: actions/github-script@v9
+        with:
+          retries: 3 # GitHub API の一時的なエラー（5xx）はやり直す
+          script: |
+            const { reportTargetsFailure } = require('./.github/scripts/cherry-pick.js')
+            await reportTargetsFailure({ github, context })
 
   cherry-pick:
     name: cherry-pick
@@ -89,6 +104,15 @@ jobs:
             const { selectPending } = require('./.github/scripts/cherry-pick.js')
             await selectPending({ github, context, core })
 
+      - name: Wait until GitHub links the merge commit to the PR
+        if: steps.pending.outputs.branches != ''
+        uses: actions/github-script@v9
+        with:
+          retries: 3 # GitHub API の一時的なエラー（5xx）はやり直す
+          script: |
+            const { waitForMergeLink } = require('./.github/scripts/cherry-pick.js')
+            await waitForMergeLink({ github, context, core })
+
       - id: backport
         if: steps.pending.outputs.branches != ''
         uses: korthout/backport-action@0ebd44f9c79a4a0a171200dcdcceec3ed9ca732f # v4.7.1
@@ -105,7 +129,7 @@ jobs:
             #${pull_number} を `${target_branch}` に cherry-pick する PR です。
           copy_assignees: true # 元の PR の担当者を引き継ぐ（担当者がいなければ付けない）
           comment_style: summary
-          # コンフリクトしたら、コンフリクトを含んだままの draft PR を作り、解き方を元の PR にコメントする
+          # コンフリクトしたら、コンフリクトを含んだままの draft PR を作る（解き方は draft の PR にコメントされる）
           experimental: '{"conflict_resolution": "draft_commit_conflicts"}'
 
       - id: label
@@ -125,6 +149,9 @@ jobs:
         env:
           APP_TOKEN_OUTCOME: ${{ steps.app-token.outcome }}
           JOB_STATUS: ${{ job.status }}
+          PENDING_BRANCHES: ${{ steps.pending.outputs.branches }}
+          BACKPORT_OUTCOME: ${{ steps.backport.outcome }}
+          WAS_SUCCESSFUL: ${{ steps.backport.outputs.was_successful }}
           RESULTS: ${{ steps.backport.outputs.was_successful_by_target }}
         with:
           retries: 3 # GitHub API の一時的なエラー（5xx）はやり直す

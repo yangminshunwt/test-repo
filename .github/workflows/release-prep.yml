@@ -64,16 +64,6 @@ jobs:
             const { prepare } = require('./.github/scripts/release-prep.js')
             await prepare({ github, context, core })
 
-      - name: Catch up cherry-picks
-        uses: actions/github-script@v9
-        env:
-          CREATED_FROM: ${{ steps.prepare.outputs.created_from }}
-        with:
-          retries: 3 # GitHub API の一時的なエラー（5xx）はやり直す
-          script: |
-            const { catchUpCherryPicks } = require('./.github/scripts/release-prep.js')
-            await catchUpCherryPicks({ github, context, core })
-
       - id: pull-request
         uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
         with:
@@ -98,3 +88,14 @@ jobs:
           PR_URL: ${{ steps.pull-request.outputs.pull-request-url }}
           OPERATION: ${{ steps.pull-request.outputs.pull-request-operation }}
         run: echo "- VERSION を上げる PR（${OPERATION}）：${PR_URL}" >> "$GITHUB_STEP_SUMMARY"
+
+      # VERSION を上げる PR を作ってから動かす（ここで失敗しても、その PR は作られているように）
+      - name: Catch up cherry-picks
+        uses: actions/github-script@v9
+        env:
+          RELEASE_BRANCH: ${{ steps.prepare.outputs.release_branch }}
+        with:
+          retries: 3 # GitHub API の一時的なエラー（5xx）はやり直す
+          script: |
+            const { catchUpCherryPicks } = require('./.github/scripts/release-prep.js')
+            await catchUpCherryPicks({ github, context, core })
