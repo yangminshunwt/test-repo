@@ -78,10 +78,9 @@ jobs:
           PRODUCT: ${{ inputs.product }}
           NEXT_VERSION: ${{ steps.prepare.outputs.next_version }}
         with:
-          retries: 3 # GitHub API の一時的なエラー（5xx）はやり直す
           script: |
             const { bumpVersion } = require('./.github/scripts/hotfix-prep.js')
-            await bumpVersion()
+            bumpVersion()
 
       - id: pull-request
         uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1

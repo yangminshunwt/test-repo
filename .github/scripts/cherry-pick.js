@@ -1,23 +1,14 @@
 // cherry-pick.yml から actions/github-script で呼ぶ処理。
 'use strict';
 
-const { findCherryPickTargets, parseReleaseBranch, parseVersionFile } = require('./release-labels.js');
-
-// cherry-pick.yml の backport-action の branch_name と同じ形にする
-function cherryPickBranch(prNumber, target) {
-  return `cherry-pick-${prNumber}-to-${target}`;
-}
+const { listReleaseBranches, readFile } = require('./github-helpers.js');
+const { cherryPickBranch, findCherryPickTargets, parseReleaseBranch, parseVersionFile } = require('./release-labels.js');
 
 function manualGuide(prNumber) {
   return [
     `手で cherry-pick するときは、行き先のブランチから \`${cherryPickBranch(prNumber, '<行き先のブランチ>')}\` という名前の作業ブランチを作って cherry-pick し、行き先のブランチのバージョンのリリースラベル（例：\`release/product-a/v1.4.0\` なら \`product-a/v1.4.0\`）を付けて PR を出してください。この名前にしておくと、自動でやり直したときに重ねて作られません。元の PR のラベルを付けると、その PR のマージでさらに cherry-pick されます。`,
     `原因を直して自動でやり直すときは、Actions の「Cherry-pick」→「Run workflow」で、PR の番号 ${prNumber} を指定してください。`,
   ].join('\n\n');
-}
-
-async function readFile(github, repo, path, ref) {
-  const { data } = await github.rest.repos.getContent({ ...repo, path, ref });
-  return Buffer.from(data.content, 'base64').toString('utf8');
 }
 
 async function findCherryPickPulls(github, repo, prNumber, target, state) {
@@ -32,7 +23,7 @@ async function commentOnce(github, repo, issueNumber, body) {
   await github.rest.issues.createComment({ ...repo, issue_number: issueNumber, body });
 }
 
-// 元の PR（PR_NUMBER）の cherry-pick 先を決めて、pr_number と all_branches（スペース区切り）を出力する。
+// 元の PR（PR_NUMBER）の cherry-pick 先を決めて、all_branches（スペース区切り）に出力する。
 // 行き先を決められないラベルや、VERSION をまだ上げていない行き先があれば、元の PR にコメントで知らせる。
 async function findTargets({ github, context, core }) {
   const repo = context.repo;
@@ -43,12 +34,10 @@ async function findTargets({ github, context, core }) {
     core.setFailed(`#${prNumber} はマージされていません。`);
     return;
   }
-  const labels = (
-    await github.paginate(github.rest.issues.listLabelsOnIssue, { ...repo, issue_number: prNumber, per_page: 100 })
-  ).map((label) => label.name);
+  const labels = pr.labels.map((label) => label.name);
   const versionFile = await readFile(github, repo, 'VERSION', pr.merge_commit_sha);
-  const refs = await github.paginate(github.rest.git.listMatchingRefs, { ...repo, ref: 'heads/release/', per_page: 100 });
-  const branches = refs.map((ref) => ref.ref.replace(/^refs\/heads\//, ''));
+  if (versionFile === null) return core.setFailed(`#${prNumber} をマージしたコミットに VERSION がありません。`);
+  const branches = await listReleaseBranches(github, repo);
 
   const { targets, problems, missing } = findCherryPickTargets({ baseBranch: pr.base.ref, labels, versionFile, branches });
 
@@ -65,13 +54,8 @@ async function findTargets({ github, context, core }) {
     // 修正フェーズのブランチで VERSION をまだ上げていなければ、cherry-pick の PR はラベルのチェックで止まる
     // （自動化を入れる前のタグから作ったブランチには、VERSION を上げる PR までは VERSION も自動化もない）
     const release = parseReleaseBranch(target);
-    let targetVersion = null;
-    try {
-      targetVersion = parseVersionFile(await readFile(github, repo, 'VERSION', target))[release.product];
-    } catch (error) {
-      if (error.status !== 404) throw error;
-    }
-    if (targetVersion !== release.version) {
+    const targetVersionFile = await readFile(github, repo, 'VERSION', target);
+    if (targetVersionFile === null || parseVersionFile(targetVersionFile)[release.product] !== release.version) {
       problems.push(
         `${target} の VERSION がまだ ${release.version} になっていません。VERSION を上げる PR がマージされたあと、cherry-pick の PR で \`gh pr update-branch <番号>\` を実行して、チェックをやり直してください。`,
       );
@@ -85,7 +69,6 @@ async function findTargets({ github, context, core }) {
     .write();
 
   // コメントに失敗しても、決められた行き先への cherry-pick は続けられるよう、先に出力する
-  core.setOutput('pr_number', prNumber);
   core.setOutput('all_branches', targets.join(' '));
 
   if (problems.length > 0) {
@@ -160,15 +143,14 @@ async function reportFailures({ github, context, core }) {
   const reasons = [];
   if (env.APP_TOKEN_OUTCOME !== 'success') {
     reasons.push('GitHub App のトークンを作れませんでした。App とリポジトリの設定（CHERRY_PICK_APP_CLIENT_ID・CHERRY_PICK_APP_PRIVATE_KEY）を確かめてください。');
-  } else if (env.PENDING_OUTCOME !== 'success') {
-    reasons.push('cherry-pick する行き先を確かめられませんでした。');
-  } else if (env.PENDING_BRANCHES && env.BACKPORT_OUTCOME !== 'success') {
-    reasons.push('backport-action が動かなかったか、途中で失敗しました。');
+  } else if (env.JOB_STATUS === 'failure') {
+    reasons.push('途中のステップが失敗しました。実行の記録を確かめてください。');
   }
+  // backport-action は、一部の行き先に cherry-pick できなくてもステップを失敗にせず、結果に false を記録するだけなので、ここで拾う
+  // （コンフリクトして draft の PR を作った行き先は true になるので、ここでは知らせない）
   for (const line of (env.RESULTS || '').split('\n')) {
     if (line.endsWith('=false')) reasons.push(`${line.slice(0, -'=false'.length)} に cherry-pick できませんでした。`);
   }
-  if (env.LABEL_OUTCOME === 'failure') reasons.push('cherry-pick の PR にリリースラベルを付けられませんでした。');
   if (reasons.length === 0) return;
 
   const { data: pr } = await github.rest.pulls.get({ ...repo, pull_number: prNumber });

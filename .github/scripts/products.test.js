@@ -9,7 +9,6 @@ const { parseVersionFile } = require('./release-labels.js');
 
 const root = path.join(__dirname, '..', '..');
 const read = (file) => fs.readFileSync(path.join(root, file), 'utf8');
-const exists = (file) => fs.existsSync(path.join(root, file));
 const products = Object.keys(parseVersionFile(read('VERSION'))).sort();
 
 // YAML の 1 行のリスト（[a, b, c]）を配列にする
@@ -38,7 +37,7 @@ test('製品のパス設定に、VERSION の製品ごとのフィルタがあり
 // VERSION の製品がすべて選べることを確かめる（選択肢が多いぶんには、実行したときに止まる）。
 for (const workflow of ['release-prep.yml', 'hotfix-prep.yml']) {
   const file = `.github/workflows/${workflow}`;
-  test(`${workflow} の製品の選択肢に、VERSION の製品がすべてある`, { skip: !exists(file) }, () => {
+  test(`${workflow} の製品の選択肢に、VERSION の製品がすべてある`, () => {
     const options = /\n {6}product:[\s\S]*?options:\s*\[([^\]]*)\]/.exec(read(file));
     assert.ok(options, `${workflow} の product の options が見つかりません`);
     const choices = flowList(options[1]);
