@@ -208,7 +208,8 @@ function checkReleaseLabels({ baseBranch, labels, affectedProducts, versionFile,
         release && version === release.version
           ? `${label}：${baseBranch} はリリース済みです（このブランチに入れても、どのリリースにも入りません）。この PR はマージせずに閉じてください。` +
             'cherry-pick の PR なら、先に元の PR のリリースラベルをこのブランチより新しいバージョンに付け替えてください。' +
-            '閉じたあと Tag Creation の release を実行し直すと、このブランチは消えます。入れる変更なら、そのあと Hotfix Preparation で作るブランチに出し直してください。'
+            '閉じたあと Tag Creation の release を実行し直してください（リリースより後のコミットがあってブランチが残るときは、その実行の案内に従ってください）。' +
+            '入れる変更なら、ブランチが消えたあと Hotfix Preparation で作るブランチに出し直してください。'
           : `${label}：リリース済みのバージョンです。これから入るリリースのバージョンを付けてください。`,
       );
     } else if (compareVersions(version, upper) > 0) {

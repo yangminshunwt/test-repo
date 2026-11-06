@@ -93,7 +93,7 @@ jobs:
           path: backport-work
           token: ${{ steps.app-token.outputs.token }}
 
-      # Re-run でも今の状態で決めるよう、まだ cherry-pick の PR がない行き先はこのジョブの中で選ぶ
+      # Re-run でも今の状態で決めるよう、行き先とまだ cherry-pick の PR がない行き先は、このジョブの中で決め直す
       - id: pending
         name: Select targets without cherry-pick pull requests
         uses: actions/github-script@v9
@@ -136,6 +136,8 @@ jobs:
         name: Label cherry-pick pull requests
         if: ${{ !cancelled() && steps.app-token.outcome == 'success' }}
         uses: actions/github-script@v9
+        env:
+          TARGETS: ${{ steps.pending.outputs.targets }} # 決め直した行き先（リリース済みの行き先は除いてある）
         with:
           retries: 3 # GitHub API の一時的なエラー（5xx）はやり直す
           github-token: ${{ steps.app-token.outputs.token }}

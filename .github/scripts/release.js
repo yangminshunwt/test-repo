@@ -43,11 +43,15 @@ function checkMainVersion(plan) {
 }
 
 // source（main か、同じ製品のより新しいリリースブランチ）にマージされた PR のうち、head に入っていないものを返す
-// （{ pulls, unmatched }。unmatched は PR が見つからなかったコミット）。リリースブランチは、main から来たコミットを除く
-// （それは main にマージされた PR として、main のほうで数える）。
-function pullsNotIn(github, repo, head, source) {
+// （{ pulls, unmatched }。unmatched は PR が見つからなかったコミット）。
+// - --first-parent：マージコミットでマージした PR（自動化を入れる前の履歴など）も、PR ごとに 1 つのコミットで数える
+// - リリースブランチは、main から来たコミットを除く（それは main にマージされた PR として、main のほうで数える）。
+//   修正フェーズのブランチの履歴には、リリース後に消した前のリリースブランチのコミットも入るので、同じ製品の
+//   どのリリースブランチにマージされた PR も受け入れる
+function pullsNotIn(github, repo, head, source, product) {
   const range = source === 'main' ? [`${head}..origin/main`] : [`${head}..origin/${source}`, '^origin/main'];
-  return mergedPullsForCommits(github, repo, git('rev-list', ...range).split('\n').filter(Boolean), source);
+  const base = source === 'main' ? 'main' : (ref) => parseReleaseBranch(ref)?.product === product;
+  return mergedPullsForCommits(github, repo, git('rev-list', '--first-parent', ...range).split('\n').filter(Boolean), base);
 }
 
 // 後から入ったコミットを API で取る（チェックアウトした時点より後のコミットもあるので、手元の履歴は使わない）
@@ -88,7 +92,7 @@ async function findMissingChanges(github, repo, head, plan) {
   const unmatched = [];
   let cherryPicks = null; // 要るときに一度だけ作る
   for (const source of ['main', ...newer]) {
-    const notIn = await pullsNotIn(github, repo, head, source);
+    const notIn = await pullsNotIn(github, repo, head, source, plan.product);
     unmatched.push(...notIn.unmatched);
     for (const pull of notIn.pulls) {
       const { releaseLabels } = extractReleaseLabels(
@@ -117,7 +121,10 @@ function missingError(branch, { missing, unmatched }, { afterRelease }) {
     messages.push(`ラベルではこのリリースに入るはずなのに、${where}に入っていない変更があります（${prList(missing)}）。${guide}`);
   }
   if (unmatched.length > 0) {
-    messages.push(`${branch} に入っていないコミットのうち、マージした PR が見つからないものがあります（${commitList(unmatched)}）。このリリースに入るはずの変更かを確かめてください。`);
+    messages.push(
+      `${branch} に入っていないコミットのうち、マージした PR が見つからないものがあります（${commitList(unmatched)}）。` +
+        'PR を通さずに入ったコミットは、この自動化ではこのリリースに入るかを判断できないので、管理者に確かめてもらってください。',
+    );
   }
   return messages.join('\n');
 }
@@ -282,6 +289,11 @@ async function release({ github, context, core }) {
     checkedAt ??= Date.parse(response.headers.date);
     return response.data;
   });
+  // このブランチから出した PR（リリースブランチを main に戻す PR など）も、ブランチを消すと閉じられる
+  const fromBranch = await github.paginate(github.rest.pulls.list, { ...repo, state: 'open', head: `${repo.owner}:${branch}`, per_page: 100 });
+  if (fromBranch.length > 0) {
+    problems.push(`${branch} から出した PR がまだ開いています（${prList(fromBranch)}）。ブランチを消すと閉じられるので、消していません。マージするか閉じてから実行し直してください。`);
+  }
   if (open.length > 0) {
     problems.push(
       `${branch} に向けた PR がまだ開いています（${prList(open)}）。今回のリリースには入っていないので、ブランチは消していません。` +
@@ -300,9 +312,11 @@ async function release({ github, context, core }) {
     if (deleted) {
       results.push(`${branch} を削除しました。`);
       // 確かめてから消すまでの間に開かれた PR は、削除で閉じられる（閉じるのが遅れて、まだ開いていることもある）。あれば知らせる
-      const left = (await github.paginate(github.rest.pulls.list, { ...repo, state: 'all', base: branch, per_page: 100 })).filter(
-        (pull) => !pull.merged_at && (pull.state === 'open' || Date.parse(pull.closed_at) >= checkedAt),
-      );
+      const touched = [
+        ...(await github.paginate(github.rest.pulls.list, { ...repo, state: 'all', base: branch, per_page: 100 })),
+        ...(await github.paginate(github.rest.pulls.list, { ...repo, state: 'all', head: `${repo.owner}:${branch}`, per_page: 100 })),
+      ];
+      const left = touched.filter((pull) => !pull.merged_at && (pull.state === 'open' || Date.parse(pull.closed_at) >= checkedAt));
       if (left.length > 0) {
         problems.push(
           `確かめてから消すまでの間に開かれた PR（${prList(left)}）は、ブランチの削除で閉じられます。今回のリリースには入っていません。` +
@@ -318,6 +332,13 @@ async function release({ github, context, core }) {
 // リリースしたバージョンのラベルが付いた開いている PR は、ラベルを付け直して、ラベルのチェックをやり直させる
 // （リリースしてもイベントは起きないので、前の成功のままマージできてしまう。やり直すとリリース済みのラベルとして止まる）
 async function recheckLabeledPulls(github, core, repo, label) {
+  // アーカイブしたラベルは付け直せない。アーカイブ済みなら、アーカイブした実行がその前にやり直させている
+  try {
+    if ((await github.rest.issues.getLabel({ ...repo, name: label })).data.archived_at) return [];
+  } catch (error) {
+    if (error.status !== 404) throw error;
+    return [];
+  }
   const pulls = (await github.paginate(github.rest.issues.listForRepo, { ...repo, labels: label, state: 'open', per_page: 100 })).filter(
     (issue) => issue.pull_request,
   );

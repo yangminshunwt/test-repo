@@ -45,7 +45,7 @@ async function listReleaseBranches(github, repo) {
   return refs.map((ref) => ref.ref.replace(/^refs\/heads\//, ''));
 }
 
-// base に squash でマージされた PR のうち、マージコミットが shas にあるものを pulls で返す。
+// base（ブランチ名。ほかのブランチも受け入れるときは ref を受け取る関数）にマージされた PR のうち、マージコミットが shas にあるものを pulls で返す。
 // PR が見つからなかったコミットは unmatched で返す（黙って飛ばさない）。
 // 「このコミットを含む PR」の API はマージの直後には反映されていないことがあるので、まずマージした PR の一覧と突き合わせる。
 // 一覧はページ送りの間に PR が更新されると並びがずれて見落とすことがあるので、残ったコミットは 1 つずつ確かめ直す
@@ -54,9 +54,11 @@ async function mergedPullsForCommits(github, repo, shas, base) {
   const wanted = new Set(shas);
   const pulls = new Map();
   if (wanted.size === 0) return { pulls: [], unmatched: [] };
-  await github.paginate(github.rest.pulls.list, { ...repo, state: 'closed', base, sort: 'updated', direction: 'desc', per_page: 100 }, (response, done) => {
+  const accepts = typeof base === 'function' ? base : (ref) => ref === base;
+  const listed = typeof base === 'function' ? {} : { base };
+  await github.paginate(github.rest.pulls.list, { ...repo, state: 'closed', ...listed, sort: 'updated', direction: 'desc', per_page: 100 }, (response, done) => {
     for (const pull of response.data) {
-      if (pull.merged_at && wanted.delete(pull.merge_commit_sha)) pulls.set(pull.number, pull);
+      if (pull.merged_at && accepts(pull.base.ref) && wanted.delete(pull.merge_commit_sha)) pulls.set(pull.number, pull);
     }
     if (wanted.size === 0) done();
     return [];
@@ -65,8 +67,14 @@ async function mergedPullsForCommits(github, repo, shas, base) {
     const { data: commit } = await github.rest.git.getCommit({ ...repo, commit_sha: sha });
     const number = /\(#(\d+)\)$/.exec(commit.message.split('\n')[0])?.[1];
     if (!number) continue;
-    const { data: pull } = await github.rest.pulls.get({ ...repo, pull_number: Number(number) });
-    if (pull.merged_at && pull.merge_commit_sha === sha && pull.base.ref === base) {
+    let pull;
+    try {
+      ({ data: pull } = await github.rest.pulls.get({ ...repo, pull_number: Number(number) }));
+    } catch (error) {
+      if (error.status === 404) continue; // (#番号) が PR ではなかった（Issue など）
+      throw error;
+    }
+    if (pull.merged_at && pull.merge_commit_sha === sha && accepts(pull.base.ref)) {
       wanted.delete(sha);
       pulls.set(pull.number, pull);
     }
