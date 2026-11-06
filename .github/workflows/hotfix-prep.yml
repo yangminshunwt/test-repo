@@ -94,6 +94,7 @@ jobs:
           commit-message: Bump ${{ inputs.product }} to ${{ steps.prepare.outputs.next_version }}
           title: Bump ${{ inputs.product }} to ${{ steps.prepare.outputs.next_version }}
           labels: ${{ steps.prepare.outputs.next_label }}
+          assignees: ${{ github.actor }} # 実行した人を担当者にする
           body: |
             `${{ steps.prepare.outputs.release_branch }}`（${{ steps.prepare.outputs.released_tag }} から作ったリリースブランチ）の ${{ inputs.product }} の VERSION を ${{ steps.prepare.outputs.next_version }} に上げる PR です（Hotfix Preparation のワークフローが作りました）。
 
