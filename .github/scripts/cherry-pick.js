@@ -52,7 +52,6 @@ async function findTargets({ github, context, core }) {
   }
   for (const target of targets) {
     // 修正フェーズのブランチで VERSION をまだ上げていなければ、cherry-pick の PR はラベルのチェックで止まる
-    // （自動化を入れる前のタグから作ったブランチには、VERSION を上げる PR までは VERSION も自動化もない）
     const release = parseReleaseBranch(target);
     const targetVersionFile = await readFile(github, repo, 'VERSION', target);
     if (targetVersionFile === null || parseVersionFile(targetVersionFile)[release.product] !== release.version) {
