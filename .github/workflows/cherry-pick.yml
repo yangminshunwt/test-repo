@@ -1,0 +1,137 @@
+name: Cherry-pick
+
+# マージされた PR の変更を、リリースラベルが表す範囲のリリースブランチに cherry-pick する PR を作る。
+# pull_request_target はマージ先に関係なく既定ブランチ（main）のワークフローとスクリプトで動く。PR のコードは実行しない。
+on:
+  pull_request_target:
+    types: [closed]
+    branches:
+      - main
+      - 'release/**'
+  # 失敗した行き先の原因を直したあとや、リリースブランチを作ったあとに、手でやり直す
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: cherry-pick する PR の番号（マージ済みのもの）
+        required: true
+        type: number
+
+permissions:
+  contents: read
+
+jobs:
+  targets:
+    name: find cherry-pick targets
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.merged
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write # 行き先を決められないときに元の PR へコメントする（PR へのコメントには pull-requests の権限が要る）
+    outputs:
+      pr_number: ${{ steps.targets.outputs.pr_number }}
+      all_branches: ${{ steps.targets.outputs.all_branches }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - id: targets
+        uses: actions/github-script@v9
+        env:
+          PR_NUMBER: ${{ inputs.pr_number || github.event.pull_request.number }}
+        with:
+          retries: 3 # GitHub API の一時的なエラー（5xx）はやり直す
+          script: |
+            const { findTargets } = require('./.github/scripts/cherry-pick.js')
+            await findTargets({ github, context, core })
+
+  cherry-pick:
+    name: cherry-pick
+    needs: targets
+    if: needs.targets.outputs.all_branches != ''
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write # 失敗を元の PR へコメントする（App のトークンを作れなかったときも知らせるため GITHUB_TOKEN で）
+    env:
+      PR_NUMBER: ${{ needs.targets.outputs.pr_number }}
+      TARGETS: ${{ needs.targets.outputs.all_branches }}
+    steps:
+      # スクリプト用。途中のステップが失敗しても失敗を知らせられるよう、最初に取る
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      # GITHUB_TOKEN で作った PR ではチェックが走らないので、GitHub App のトークンを使う
+      - id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ vars.CHERRY_PICK_APP_CLIENT_ID }}
+          private-key: ${{ secrets.CHERRY_PICK_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-issues: write
+          permission-pull-requests: write
+          permission-workflows: write # .github/workflows の変更も cherry-pick するため
+
+      # backport-action は作業場所のブランチを切り替えるので、スクリプトとは別の場所に取る
+      - uses: actions/checkout@v7
+        with:
+          path: backport-work
+          token: ${{ steps.app-token.outputs.token }}
+
+      # Re-run でも今の状態で決めるよう、まだ cherry-pick の PR がない行き先はこのジョブの中で選ぶ
+      - id: pending
+        name: Select targets without cherry-pick pull requests
+        uses: actions/github-script@v9
+        with:
+          retries: 3 # GitHub API の一時的なエラー（5xx）はやり直す
+          github-token: ${{ steps.app-token.outputs.token }}
+          script: |
+            const { selectPending } = require('./.github/scripts/cherry-pick.js')
+            await selectPending({ github, context, core })
+
+      - id: backport
+        if: steps.pending.outputs.branches != ''
+        uses: korthout/backport-action@0ebd44f9c79a4a0a171200dcdcceec3ed9ca732f # v4.7.1
+        with:
+          github_token: ${{ steps.app-token.outputs.token }}
+          github_workspace: ${{ github.workspace }}/backport-work
+          source_pr_number: ${{ needs.targets.outputs.pr_number }}
+          target_branches: ${{ steps.pending.outputs.branches }}
+          label_pattern: '' # 行き先は targets ジョブと pending ステップで決めたものだけにする
+          branch_name: cherry-pick-${pull_number}-to-${target_branch} # cherry-pick.js の cherryPickBranch と同じ形
+          pull_title: '[cherry-pick ${target_branch}] ${pull_title}'
+          pull_description: |-
+            #${pull_number} を `${target_branch}` に cherry-pick する PR です。
+            リリースラベルは、行き先のブランチのバージョンを付けています。
+          add_author_as_assignee: true
+          comment_style: summary
+          # コンフリクトしたら、コンフリクトを含んだままの draft PR を作り、解き方を元の PR にコメントする
+          experimental: '{"conflict_resolution": "draft_commit_conflicts"}'
+
+      - id: label
+        name: Label cherry-pick pull requests
+        if: ${{ !cancelled() && steps.app-token.outcome == 'success' }}
+        uses: actions/github-script@v9
+        with:
+          retries: 3 # GitHub API の一時的なエラー（5xx）はやり直す
+          github-token: ${{ steps.app-token.outputs.token }}
+          script: |
+            const { labelPullRequests } = require('./.github/scripts/cherry-pick.js')
+            await labelPullRequests({ github, context, core })
+
+      - name: Report failures
+        if: ${{ !cancelled() }}
+        uses: actions/github-script@v9
+        env:
+          APP_TOKEN_OUTCOME: ${{ steps.app-token.outcome }}
+          PENDING_OUTCOME: ${{ steps.pending.outcome }}
+          PENDING_BRANCHES: ${{ steps.pending.outputs.branches }}
+          BACKPORT_OUTCOME: ${{ steps.backport.outcome }}
+          RESULTS: ${{ steps.backport.outputs.was_successful_by_target }}
+          LABEL_OUTCOME: ${{ steps.label.outcome }}
+        with:
+          retries: 3 # GitHub API の一時的なエラー（5xx）はやり直す
+          script: |
+            const { reportFailures } = require('./.github/scripts/cherry-pick.js')
+            await reportFailures({ github, context, core })
