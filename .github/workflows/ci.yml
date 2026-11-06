@@ -6,9 +6,61 @@ on:
 permissions:
   contents: read
 
+# 影響する製品のテストだけを動かす。飛ばすときは、ワークフローの paths ではなくジョブの if で飛ばす
+# （if で飛ばしたジョブは必須チェックでも成功の扱いになるが、ワークフローごと動かないとチェックが待ちのまま残る）。
+# 判定のジョブが失敗したときは、念のためすべて動かす。
 jobs:
+  changes:
+    name: find affected products
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read # paths-filter が PR の変更ファイルを API で取る
+    outputs:
+      products: ${{ steps.affected.outputs.products }}
+      scripts: ${{ steps.scripts.outputs.scripts }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      # 影響する製品は、ラベルのチェックと同じ設定（.github/product-paths.yml）と同じ関数で決める
+      - id: paths
+        uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
+        with:
+          filters: .github/product-paths.yml
+
+      - id: scripts
+        uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
+        with:
+          filters: |
+            scripts:
+              - '.github/**'
+              - 'VERSION'
+
+      - id: affected
+        uses: actions/github-script@v9
+        env:
+          MATCHED: ${{ steps.paths.outputs.changes }}
+          ALL_FILE_COUNT: ${{ steps.paths.outputs.all_count }}
+          LISTED_FILE_COUNT: ${{ steps.paths.outputs.listed_count }}
+        with:
+          script: |
+            const fs = require('fs')
+            const { findAffectedProducts, parseVersionFile } = require('./.github/scripts/release-labels.js')
+            const { products } = findAffectedProducts({
+              matched: JSON.parse(process.env.MATCHED || '[]'),
+              products: Object.keys(parseVersionFile(fs.readFileSync('VERSION', 'utf8'))),
+              allFileCount: Number.parseInt(process.env.ALL_FILE_COUNT, 10),
+              listedFileCount: Number.parseInt(process.env.LISTED_FILE_COUNT, 10),
+            })
+            core.info(`影響する製品：${products.join('、') || '（なし）'}`)
+            core.setOutput('products', JSON.stringify(products))
+
   unit-test-product-a:
     name: unit test for product-a
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || contains(needs.changes.outputs.products, '"product-a"')) }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -19,6 +71,8 @@ jobs:
 
   unit-test-product-b:
     name: unit test for product-b
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || contains(needs.changes.outputs.products, '"product-b"')) }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -27,8 +81,11 @@ jobs:
       - name: Run tests
         run: test ! -e ProductB/FAIL
 
+  # 自動化のスクリプトとワークフロー、VERSION（製品名がそろっているかを確かめる）が変わったときだけ動かす
   script-test:
     name: script test
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.scripts == 'true') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
