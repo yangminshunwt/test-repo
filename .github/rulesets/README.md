@@ -10,7 +10,7 @@ gh api -X POST repos/{owner}/{repo}/rulesets --input .github/rulesets/<ファイ
 
 | ファイル | 対象 | 内容 |
 |---|---|---|
-| `protected-branches.json` | `main`・`release/**` | PR を必須にする（マージは squash だけ）、必須チェック、force push の禁止 |
+| `protected-branches.json` | `main`・`release/**` | PR を必須にする（マージは squash だけ）、必須チェック（マージの前にマージ先の最新を取り込み、チェックをやり直す）、force push の禁止 |
 | `main-deletion.json` | `main` | 削除の禁止（例外なし） |
 | `release-branch-creation-deletion.json` | `release/**` | 作成と削除の禁止（リリースブランチは自動化が作り、リリース後に消すので、管理者と自動化の App は除く） |
 | `release-tags.json` | `*/v*` のタグ | 作成・変更・削除の禁止（管理者と自動化の App は除く） |
