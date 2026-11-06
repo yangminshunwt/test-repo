@@ -163,10 +163,14 @@ function checkReleaseLabels({ baseBranch, labels, affectedProducts, versionFile,
       errors.push(`${product} に影響する変更ですが、${product} のリリースラベルが付いていません。`);
     }
   }
+  // 影響しない製品のラベルは止める（古いバージョンなら、関係のない変更がその製品のリリースブランチに cherry-pick される）。
+  // どの製品にも影響しない変更（docs だけなど）は、ラベルが 1 つ要るので、どの製品のラベルでもよい。
   if (!release && requiredProducts.length > 0) {
     for (const product of labelsByProduct.keys()) {
       if (!requiredProducts.includes(product)) {
-        warnings.push(`${product} に影響する変更は見つかりませんでしたが、${product} のリリースラベルが付いています。`);
+        errors.push(
+          `${product} に影響する変更はありませんが、${product} のリリースラベルが付いています。外すか、${product} が使うパスなら .github/product-paths.yml に書き足してください。`,
+        );
       }
     }
   }

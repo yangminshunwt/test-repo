@@ -91,10 +91,9 @@ test('main：共有コードの変更には、両方の製品のラベルが必�
   assertOk(check({ labels: ['product-a/v1.5.0', 'product-b/v1.5.0'], affectedProducts }));
 });
 
-test('main：影響しない製品のラベルは警告だけ', () => {
-  const result = check({ labels: ['product-a/v1.5.0', 'product-b/v1.5.0'] });
-  assertOk(result);
-  assert.equal(result.warnings.length, 1);
+test('main：影響しない製品のラベルは NG', () => {
+  assertError(check({ labels: ['product-a/v1.5.0', 'product-b/v1.5.0'] }), /product-b に影響する変更はありませんが/);
+  assertError(check({ labels: ['product-a/v1.5.0', 'product-b/v1.4.0'] }), /product-b に影響する変更はありませんが/);
 });
 
 test('main：リリースブランチのバージョンを付ければ OK（cherry-pick される）', () => {
