@@ -8,3 +8,4 @@
 - `SharedAB/`・`SharedAC/`：一部の製品（A と B、A と C）で使うコード
 
 `ProductA/FAIL` または `ProductB/FAIL` があると、その製品のテストが失敗する。
+readme-1793966859
