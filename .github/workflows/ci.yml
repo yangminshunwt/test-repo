@@ -42,6 +42,9 @@ jobs:
             scripts:
               - '.github/**'
               - 'VERSION'
+            # CI の設定そのものを変えたときは、すべての製品のテストを動かして確かめる
+            ci:
+              - '.github/workflows/ci.yml'
 
       - id: affected
         uses: actions/github-script@v9
@@ -50,13 +53,15 @@ jobs:
           ALL_FILE_COUNT: ${{ steps.paths.outputs.all_count }}
           LISTED_FILE_COUNT: ${{ steps.paths.outputs.listed_count }}
           SCRIPTS: ${{ steps.scripts.outputs.scripts }}
+          CI_CHANGED: ${{ steps.scripts.outputs.ci }}
         with:
           script: |
             const { MAX_LISTED_FILES, reasonForAllProducts } = require('./.github/scripts/release-labels.js')
             const allFileCount = Number.parseInt(process.env.ALL_FILE_COUNT, 10)
             const reason = reasonForAllProducts({ allFileCount, listedFileCount: Number.parseInt(process.env.LISTED_FILE_COUNT, 10) })
             core.info(`当たったフィルタ：${process.env.MATCHED}${reason ? `（${reason}）` : ''}`)
-            core.setOutput('all_products', String(reason !== null))
+            if (process.env.CI_CHANGED === 'true') core.info('CI の設定が変わったので、すべての製品のテストを動かします。')
+            core.setOutput('all_products', String(reason !== null || process.env.CI_CHANGED === 'true'))
             // 一覧が上限で切れているかもしれないときは、スクリプトの変更も見落としているかもしれないので動かす
             core.setOutput('scripts', String(process.env.SCRIPTS === 'true' || allFileCount >= MAX_LISTED_FILES))
 
