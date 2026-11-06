@@ -104,9 +104,6 @@ jobs:
           pull_title: '[🍒 → ${target_branch}] ${pull_title}'
           pull_description: |-
             #${pull_number} を `${target_branch}` に cherry-pick する PR です。
-
-            - リリースラベル: 行き先のブランチのバージョン（この変更が最初に入るリリース）を付けています。
-            - draft のとき: コンフリクトが残っています。直し方はこの PR のコメントにあります。
           add_author_as_assignee: true
           comment_style: summary
           # コンフリクトしたら、コンフリクトを含んだままの draft PR を作り、解き方を元の PR にコメントする
