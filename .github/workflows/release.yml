@@ -3,7 +3,8 @@ name: Tag Creation
 # リリース手順を進める（開発ルールの「リリース手順」）。Use workflow from でリリースブランチを選んで実行する。
 # - rc：リリース申請の前に、リリースブランチの先頭に次の rc タグ（<製品名>/vX.Y.Z-rc.N）を打つ
 # - release：リリースの後に、リリースタグ（<製品名>/vX.Y.Z）を打ち、リリースブランチを削除する。
-#   rc を打っていれば最後の rc と同じコミットに、打っていなければ rc と同じ確認をしてからリリースブランチの先頭に打つ
+#   rc を打っていれば最後の rc と同じコミットに、打っていなければ commit に入力したリリースしたコミットに打つ
+#   （ブランチの先頭は、リリースのあとにマージされたコミットで進んでいることがあるので使わない）
 on:
   workflow_dispatch:
     inputs:
@@ -12,6 +13,10 @@ on:
         required: true
         type: choice
         options: [rc, release]
+      commit:
+        description: 'Released commit SHA (release step only; required when no rc tag was created)'
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -47,11 +52,12 @@ jobs:
           private-key: ${{ secrets.CHERRY_PICK_APP_PRIVATE_KEY }}
           permission-contents: write
           permission-issues: write # リリースしたバージョンのリリースラベルをアーカイブする
-          permission-pull-requests: read
+          permission-pull-requests: write # リリースしたバージョンのラベルが付いた開いている PR のラベルを付け直し、ラベルのチェックをやり直させる
 
       - uses: actions/github-script@v9
         env:
           STEP: ${{ inputs.step }}
+          COMMIT: ${{ inputs.commit }}
           RELEASE_WORK: release-work
         with:
           retries: 3 # GitHub API の一時的なエラー（5xx）はやり直す

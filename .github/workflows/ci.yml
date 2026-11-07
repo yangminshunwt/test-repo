@@ -11,7 +11,7 @@ permissions:
 # 影響する製品のテストだけを動かす。飛ばすときは、ワークフローの paths ではなくジョブの if で飛ばす
 # （if で飛ばしたジョブは必須チェックでも成功の扱いになるが、ワークフローごと動かないとチェックが待ちのまま残る）。
 # テストは、今のマージ先の先頭と PR の先頭とのマージコミットで動かす（判定のジョブが待って決める）。
-# 判定のジョブが成功しなかったとき（失敗・取り消し）は、テストのジョブを失敗にする（Re-run で決め直す）。
+# 判定のジョブが成功しなかったとき（失敗・取り消し）は、テストのジョブを失敗にする（原因を片付けて、push か Re-run で決め直す）。
 jobs:
   changes:
     name: find affected products
@@ -95,7 +95,7 @@ jobs:
         # 取り消された実行でも動くよう always() を付ける（付けないと、このステップが飛ばされてテストが成功の扱いになる）
         if: ${{ always() && needs.changes.result != 'success' }}
         run: |
-          echo "::error::どのテストを動かすかを決められませんでした（find affected products が ${{ needs.changes.result }}）。Re-run してください。"
+          echo "::error::どのテストを動かすかを決められませんでした（find affected products が ${{ needs.changes.result }}）。find affected products のエラーを見て対応してください（コンフリクトなら解消して push、取り消しや一時的なエラーなら Re-run）。"
           exit 1
       - uses: actions/checkout@v7
         with:
@@ -114,7 +114,7 @@ jobs:
         # 取り消された実行でも動くよう always() を付ける（付けないと、このステップが飛ばされてテストが成功の扱いになる）
         if: ${{ always() && needs.changes.result != 'success' }}
         run: |
-          echo "::error::どのテストを動かすかを決められませんでした（find affected products が ${{ needs.changes.result }}）。Re-run してください。"
+          echo "::error::どのテストを動かすかを決められませんでした（find affected products が ${{ needs.changes.result }}）。find affected products のエラーを見て対応してください（コンフリクトなら解消して push、取り消しや一時的なエラーなら Re-run）。"
           exit 1
       - uses: actions/checkout@v7
         with:
@@ -134,7 +134,7 @@ jobs:
         # 取り消された実行でも動くよう always() を付ける（付けないと、このステップが飛ばされてテストが成功の扱いになる）
         if: ${{ always() && needs.changes.result != 'success' }}
         run: |
-          echo "::error::どのテストを動かすかを決められませんでした（find affected products が ${{ needs.changes.result }}）。Re-run してください。"
+          echo "::error::どのテストを動かすかを決められませんでした（find affected products が ${{ needs.changes.result }}）。find affected products のエラーを見て対応してください（コンフリクトなら解消して push、取り消しや一時的なエラーなら Re-run）。"
           exit 1
       - uses: actions/checkout@v7
         with:

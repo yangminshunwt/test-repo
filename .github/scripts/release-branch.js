@@ -5,14 +5,14 @@
 
 const { branchExists, labelExists } = require('./github-helpers.js');
 
-// リリースブランチ branch を sha から作る。結果を { created, result } で返す。作れなかったときは失敗にして null を返す。
+// リリースブランチ branch を sha から作る。結果を { result } で返す。作れなかったときは失敗にして null を返す。
 async function createReleaseBranch({ github, core, repo, branch, sha }) {
   try {
     await github.rest.git.createRef({ ...repo, ref: `refs/heads/${branch}`, sha });
-    return { created: true, result: `${branch} を作りました（${sha.slice(0, 7)} から）。` };
+    return { result: `${branch} を作りました（${sha.slice(0, 7)} から）。` };
   } catch (error) {
     if (error.status === 422 && (await branchExists(github, repo, branch))) {
-      return { created: false, result: `${branch} はすでにあるので、そのまま使います。` };
+      return { result: `${branch} はすでにあるので、そのまま使います。` };
     }
     core.setFailed(`${branch} を作れませんでした（${error.message}）。ルールセットや App の権限を確かめてください。`);
     return null;

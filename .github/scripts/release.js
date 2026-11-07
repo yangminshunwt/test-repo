@@ -5,17 +5,29 @@
 const { execFileSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
-const { mergedPullsOf, prList, report, tagCommit } = require('./github-helpers.js');
+const { compareShas, deleteBranchIfAt, mergedPullsForCommits, prList, report, tagCommit } = require('./github-helpers.js');
 const { compareVersions, extractReleaseLabels, parseCherryPickBranch, parseReleaseBranch, parseVersionFile, planRelease } = require('./release-labels.js');
+const { fixPhaseLabel, fixPhaseLabelGuide } = require('./cherry-pick.js');
 
 const WORK = process.env.RELEASE_WORK;
-const git = (...args) => execFileSync('git', ['-C', WORK, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+// 履歴の全体を読むことがあるので、出力の上限を大きくしておく（既定の 1 MiB を超えると失敗する）
+const git = (...args) => execFileSync('git', ['-C', WORK, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], maxBuffer: 256 * 1024 * 1024 }).trim();
 const isAncestor = (sha, head) => {
   try {
     git('merge-base', '--is-ancestor', sha, head);
     return true;
   } catch {
     return false;
+  }
+};
+// sha の変更（第 1 親との差分）を head に当てても、head が変わらないか（同じ内容がもう入っているか）。コンフリクトするなら false。
+// Cherry-Pick（backport-action）も、cherry-pick しても何も変わらない行き先には PR を作らない
+const changesNothing = (sha, head) => {
+  try {
+    return git('merge-tree', '--write-tree', `--merge-base=${sha}^1`, head, sha).split('\n')[0] === git('rev-parse', `${head}^{tree}`);
+  } catch (error) {
+    if (error.status === 1) return false;
+    throw error;
   }
 };
 
@@ -41,9 +53,26 @@ function checkMainVersion(plan) {
   return `main の VERSION の ${plan.product} が ${mainVersion} のままです。先に main の VERSION を上げる PR（Release Preparation が作ったもの）をマージしてください。`;
 }
 
-// source（main か、同じ製品のより新しいリリースブランチ）にマージされた PR のうち、head に入っていないものを返す。
-function pullsNotIn(github, repo, head, source) {
-  return mergedPullsOf(github, repo, git('rev-list', `${head}..origin/${source}`).split('\n').filter(Boolean), source);
+// source（main か、同じ製品のより新しいリリースブランチ）にマージされた PR のうち、head に入っていないものを返す
+// （{ pulls, unmatched }。unmatched は PR が見つからなかったコミット）。
+// - --first-parent：マージコミットでマージした PR（自動化を入れる前の履歴など）も、PR ごとに 1 つのコミットで数える
+// - リリースブランチは、main から来たコミットを除く（それは main にマージされた PR として、main のほうで数える）。
+//   修正フェーズのブランチの履歴には、リリース後に消した前のリリースブランチのコミットも入るので、同じ製品の
+//   どのリリースブランチにマージされた PR も受け入れる
+function pullsNotIn(github, repo, head, source, product) {
+  const range = source === 'main' ? [`${head}..origin/main`] : [`${head}..origin/${source}`, '^origin/main'];
+  const base = source === 'main' ? 'main' : (ref) => parseReleaseBranch(ref)?.product === product;
+  return mergedPullsForCommits(github, repo, git('rev-list', '--first-parent', ...range).split('\n').filter(Boolean), base);
+}
+
+// 後から入ったコミットを API で取る（チェックアウトした時点より後のコミットもあるので、手元の履歴は使わない）
+async function lateCommits(github, repo, target, head, branch) {
+  return mergedPullsForCommits(github, repo, await compareShas(github, repo, `${target}...${head}`), branch);
+}
+
+// PR が見つからなかったコミットの一覧（短い SHA）
+function commitList(shas) {
+  return shas.map((sha) => sha.slice(0, 7)).join('、');
 }
 
 // マージされた cherry-pick の PR（すべての行き先）のマージコミットを、元の PR の番号ごとに返す。
@@ -59,9 +88,10 @@ async function mergedCherryPicks(github, repo) {
 }
 
 // main とより新しいリリースブランチにマージされた PR のうち、その製品のラベルのバージョンがこのブランチのバージョン以下なのに、
-// 変更が head に入っていないもの（cherry-pick の取りこぼし）を返す。
+// 変更が head に入っていないもの（cherry-pick の取りこぼし）を { missing, unmatched } で返す（unmatched は PR が見つからなかったコミット）。
 // 入っているかは、元の PR のマージコミットが head の祖先か、head の履歴に cherry-pick の記録（cherry picked from commit）が
-// あるか、元の PR の cherry-pick の PR（前のリリースブランチ向けのものも含む）のマージコミットが head の祖先か、で判断する。
+// あるか、元の PR の cherry-pick の PR（前のリリースブランチ向けのものも含む）のマージコミットが head の祖先か、
+// 元の PR の変更を head に当てても何も変わらないか（そのときは Cherry-Pick が PR を作らないので、止めると先に進めなくなる）、で判断する。
 async function findMissingChanges(github, repo, head, plan) {
   const picked = new Set([...git('log', head, '--format=%B').matchAll(/cherry picked from commit ([0-9a-f]{40})/g)].map((match) => match[1]));
   const newer = git('for-each-ref', '--format=%(refname:lstrip=3)', `refs/remotes/origin/release/${plan.product}/`)
@@ -71,9 +101,12 @@ async function findMissingChanges(github, repo, head, plan) {
       return release && compareVersions(release.version, plan.version) > 0;
     });
   const missing = [];
+  const unmatched = [];
   let cherryPicks = null; // 要るときに一度だけ作る
   for (const source of ['main', ...newer]) {
-    for (const pull of await pullsNotIn(github, repo, head, source)) {
+    const notIn = await pullsNotIn(github, repo, head, source, plan.product);
+    unmatched.push(...notIn.unmatched);
+    for (const pull of notIn.pulls) {
       const { releaseLabels } = extractReleaseLabels(
         pull.labels.map((label) => label.name),
         [plan.product],
@@ -82,49 +115,64 @@ async function findMissingChanges(github, repo, head, plan) {
       if (picked.has(pull.merge_commit_sha) || isAncestor(pull.merge_commit_sha, head)) continue;
       cherryPicks ??= await mergedCherryPicks(github, repo);
       if ((cherryPicks.get(pull.number) ?? []).some((sha) => isAncestor(sha, head))) continue;
+      if (changesNothing(pull.merge_commit_sha, head)) continue;
       missing.push(pull);
     }
   }
-  return missing;
+  return { missing, unmatched };
 }
 
-// リリースブランチの先頭（ジョブを始めた時点の先頭。チェックアウトしたもの）にタグを打つ前に確かめる。
-// 問題があれば { error }、なければ確かめた先頭のコミットを { head } で返す。確かめている間にブランチに入ったコミットは
-// このタグには入らない（rc なら次の rc に入れ、リリースならリリースに入っていないコミットとして知らせる）。
-// afterRelease は、rc なしでリリースするとき（release の手順）。リリースはもう済んでいるので、ブランチに変更を足して
-// やり直すようには案内しない（足すと、リリースしていないコミットにリリースタグが付く）。
-async function checkBranch(github, repo, branch, plan, { afterRelease = false } = {}) {
-  // チェックアウトしたのは、ジョブを始めた時点のリリースブランチの先頭
-  const head = git('rev-parse', 'HEAD');
-  const version = parseVersionFile(fs.readFileSync(path.join(WORK, 'VERSION'), 'utf8'))[plan.product];
-  if (version !== plan.version) {
-    const guide = afterRelease
-      ? 'rc がないので先頭をリリースしたものとして扱いますが、バージョンが合いません。リリースしたコミットを確かめてください。リリースタグは打っていません。'
-      : '先に VERSION を上げる PR をマージしてください。';
-    return { error: `${branch} の VERSION の ${plan.product} が ${plan.version} ではありません（${version}）。${guide}` };
-  }
-  const open = (await github.paginate(github.rest.pulls.list, { ...repo, state: 'open', base: branch, per_page: 100 })).filter(
-    (pull) => parseCherryPickBranch(pull.head.ref) !== null,
-  );
-  if (open.length > 0) {
-    const guide = afterRelease
-      ? 'リリースしたものには入っていないので、元の PR のリリースラベルをこのブランチより新しいバージョンに付け替えてから、cherry-pick の PR を閉じて実行し直してください（マージすると、リリースしていない変更にリリースタグが付きます）。'
-      : 'マージしてから実行し直してください。このリリースに入れない変更なら、元の PR のリリースラベルをこのブランチより新しいバージョンに付け替えてから、cherry-pick の PR を閉じてください。';
-    return { error: `${branch} への cherry-pick の PR がまだ開いています（${prList(open)}）。${guide}` };
-  }
-  const missing = await findMissingChanges(github, repo, head, plan);
+// 取りこぼしのメッセージ（afterRelease は、リリースタグを打ったあと）
+function missingError(branch, { missing, unmatched }, { afterRelease }) {
+  const messages = [];
   if (missing.length > 0) {
     const guide = afterRelease
       ? 'リリースしたものには入っていないので、その PR のリリースラベルをこのブランチより新しいバージョンに付け替えてから実行し直してください。'
       : '入れるなら、それぞれ Actions の「Cherry-Pick」→「Run workflow」で PR の番号を指定してやり直し、できた PR をマージしてください。' +
         '入れないなら、その PR のリリースラベルをこのブランチより新しいバージョンに付け替えてください。そのあと実行し直してください。';
-    return { error: `ラベルではこのリリースに入るはずなのに、${branch} に入っていない変更があります（${prList(missing)}）。${guide}` };
+    const where = afterRelease ? `${branch} のリリースしたコミット` : branch;
+    messages.push(`ラベルではこのリリースに入るはずなのに、${where}に入っていない変更があります（${prList(missing)}）。${guide}`);
+  }
+  if (unmatched.length > 0) {
+    const next = afterRelease ? 'タグはもう打ってあるので、実行し直しても変わりません。' : '';
+    messages.push(
+      `${branch} に入っていないコミットのうち、マージした PR が見つからないものがあります（${commitList(unmatched)}）。` +
+        `PR を通さずに入ったコミットは、この自動化ではこのリリースに入るかを判断できないので、管理者に確かめてもらってください。${next}`,
+    );
+  }
+  return messages.join('\n');
+}
+
+// リリースブランチの先頭（ジョブを始めた時点の先頭。チェックアウトしたもの）に rc タグを打つ前に確かめる。
+// 問題があれば { error }、なければ確かめた先頭のコミットを { head } で返す。確かめている間にブランチに入ったコミットは
+// このタグには入らない（次の rc に入れる）。
+async function checkBranch(github, repo, branch, plan) {
+  // チェックアウトしたのは、ジョブを始めた時点のリリースブランチの先頭
+  const head = git('rev-parse', 'HEAD');
+  const version = parseVersionFile(fs.readFileSync(path.join(WORK, 'VERSION'), 'utf8'))[plan.product];
+  if (version !== plan.version) {
+    return { error: `${branch} の VERSION の ${plan.product} が ${plan.version} ではありません（${version}）。先に VERSION を上げる PR をマージしてください。` };
+  }
+  const open = (await github.paginate(github.rest.pulls.list, { ...repo, state: 'open', base: branch, per_page: 100 })).filter(
+    (pull) => parseCherryPickBranch(pull.head.ref) !== null,
+  );
+  if (open.length > 0) {
+    return {
+      error:
+        `${branch} への cherry-pick の PR がまだ開いています（${prList(open)}）。マージしてから実行し直してください。` +
+        'このリリースに入れない変更なら、元の PR のリリースラベルをこのブランチより新しいバージョンに付け替えてから、cherry-pick の PR を閉じてください。',
+    };
+  }
+  const missing = await findMissingChanges(github, repo, head, plan);
+  if (missing.missing.length > 0 || missing.unmatched.length > 0) {
+    return { error: missingError(branch, missing, { afterRelease: false }) };
   }
   return { head };
 }
 
 // 手順 1：リリースブランチの先頭に、次の rc タグを打つ。
 async function releaseCandidate({ github, context, core }) {
+  if (process.env.COMMIT) return core.setFailed('commit は release のときだけ指定してください（rc は、リリースブランチの先頭に打ちます）。');
   const { repo, branch, plan, commitOf } = await loadPlan(github, context);
   if (plan.error) return core.setFailed(plan.error);
   if (plan.released) return core.setFailed(`${plan.releaseTag} はもうリリースされています。`);
@@ -159,41 +207,74 @@ async function archiveReleaseLabel(github, core, repo, label) {
   }
 }
 
-// rc より後にリリースブランチに入った PR を、次の修正にどう入れるかの案内を作る
-function guideForLateChanges(pulls) {
+// 今回のリリースに入らなかった PR（{ number, headRef }）を、修正フェーズにどう入れるかの案内を作る。
+// cherry-pick の PR は、元の PR のラベルをどうするかを、元の PR ごとに今の状態から決めて案内する
+async function guideForFixPhase(github, repo, pulls, plan) {
   const picks = [];
   const direct = [];
   for (const pull of pulls) {
-    const original = parseCherryPickBranch(pull.head.ref);
+    const original = parseCherryPickBranch(pull.headRef);
     if (original === null) direct.push(pull);
     else picks.push({ pull, original });
   }
   const guides = [];
   if (picks.length > 0) {
-    const originals = picks.map(({ original }) => `#${original}`).join('、');
+    const steps = [];
+    for (const original of new Set(picks.map((pick) => pick.original))) steps.push(await fixPhaseLabelGuide(github, repo, original, plan.product));
     guides.push(
-      `cherry-pick で入った変更（${prList(picks.map(({ pull }) => pull))}）は、修正フェーズのブランチを作ったあと、元の PR（${originals}）を Cherry-Pick の Run workflow でやり直してください。`,
+      `cherry-pick の PR（${prList(picks.map(({ pull }) => pull))}）の変更は、修正フェーズのブランチを作ったあと、${steps.join('、')}。そのあと元の PR を Cherry-Pick の Run workflow でやり直してください。`,
     );
   }
   if (direct.length > 0) {
-    guides.push(`このブランチに直接入れた変更（${prList(direct)}）は、修正フェーズのブランチに手で PR を出してください（ラベルはそのブランチのバージョン）。`);
+    guides.push(`ほかの PR（${prList(direct)}）の変更は、修正フェーズのブランチに PR を出してください（ラベルは ${await fixPhaseLabel(github, repo, plan.product)}）。`);
   }
   return guides.join('');
 }
 
+// rc なしのリリースで、リリースしたコミット（commit に入力したものか、もう打ってあるリリースタグのもの）が、
+// このブランチのそのバージョンのコミットかを確かめるために、そのコミットの VERSION のこの製品のバージョンを返す（なければ null）
+function versionAt(sha, plan) {
+  try {
+    return parseVersionFile(git('show', `${sha}:VERSION`))[plan.product] ?? null;
+  } catch {
+    return null; // VERSION がなければ、このブランチのそのバージョンのコミットではない
+  }
+}
+
+// commit に入力された SHA を、このブランチの履歴にあるコミットの完全な SHA にする（見つからなければ null）
+function resolveCommit(input) {
+  if (!/^[0-9a-f]{7,40}$/i.test(input)) return null;
+  try {
+    const sha = git('rev-parse', '--verify', '--quiet', `${input}^{commit}`);
+    return isAncestor(sha, 'HEAD') ? sha : null;
+  } catch {
+    return null;
+  }
+}
+
 // 手順 5・6：リリースタグを打ち、リリースブランチを削除する。
-// rc を打っていれば最後の rc と同じコミットに、打っていなければ rc と同じ確認をしてからリリースブランチの先頭に打つ。
+// rc を打っていれば最後の rc と同じコミットに、打っていなければ commit に入力したリリースしたコミットに打つ
+// （ブランチの先頭は、リリースのあとにマージされたコミットで進んでいることがあるので、リリースしたものとしては使わない）。
 // リリースしたコミットより後にブランチに入ったコミットはリリースに入っていないので、そのときはブランチを消さずに知らせる。
 async function release({ github, context, core }) {
   const { repo, branch, plan, commitOf } = await loadPlan(github, context);
   if (plan.error) return core.setFailed(plan.error);
   const mainError = checkMainVersion(plan);
   if (mainError) return core.setFailed(mainError);
+  const input = (process.env.COMMIT ?? '').trim();
+  const commit = input ? resolveCommit(input) : null;
+  if (input && !commit) return core.setFailed(`commit に入力した ${input} は、${branch} の履歴にあるコミットではありません。リリースしたコミットの SHA を入力してください。`);
 
   const results = [];
   let target;
   if (plan.latestRcTag) {
     target = await commitOf(plan.latestRcTag);
+    if (commit && commit !== target) {
+      return core.setFailed(
+        `rc タグがあるときは、最後の rc（${plan.latestRcTag}。${target.slice(0, 7)}）をリリースしたものとして扱いますが、commit に入力した ${input} はそれと違います。` +
+          'リリースしたコミットを確かめてください。リリースタグは打っていません。',
+      );
+    }
     if (plan.released) {
       if ((await commitOf(plan.releaseTag)) !== target) {
         return core.setFailed(`${plan.releaseTag} が ${plan.latestRcTag} と違うコミットに打たれています。タグを確かめてください。`);
@@ -206,41 +287,234 @@ async function release({ github, context, core }) {
   } else if (plan.released) {
     // rc なしでリリースタグを打ったあと、途中で止まった実行のやり直し。タグがこのブランチのそのバージョンのコミットにあるか確かめる
     target = await commitOf(plan.releaseTag);
-    let taggedVersion;
-    try {
-      taggedVersion = parseVersionFile(git('show', `${target}:VERSION`))[plan.product];
-    } catch {
-      // VERSION がなければ、このブランチのリリースタグではない
+    if (commit && commit !== target) {
+      return core.setFailed(`${plan.releaseTag} はもう ${target.slice(0, 7)} に打ってあり、commit に入力した ${input} と違います。タグを確かめてください。`);
     }
-    if (!isAncestor(target, 'HEAD') || taggedVersion !== plan.version) {
+    if (!isAncestor(target, 'HEAD') || versionAt(target, plan) !== plan.version) {
       return core.setFailed(`${plan.releaseTag} が ${branch} の ${plan.version} のコミットではないところに打たれています。タグを確かめてください。`);
     }
     results.push(`${plan.releaseTag} はすでにあります（${target.slice(0, 7)}）。`);
   } else {
-    const checked = await checkBranch(github, repo, branch, plan, { afterRelease: true });
-    if (checked.error) return core.setFailed(checked.error);
-    target = checked.head;
+    if (process.env.COMMIT === undefined) {
+      // commit の入力を入れる前のタグから作ったブランチ。ワークフローはブランチのもの、スクリプトは main のものが動く
+      return core.setFailed(
+        `${branch} の Tag Creation（.github/workflows/release.yml）は commit の入力がない古いものなので、どのコミットをリリースしたかを受け取れません。` +
+          `管理者が、リリースしたコミット（VERSION の ${plan.product} が ${plan.version}）にリリースタグ ${plan.releaseTag} を手で打ってから、実行し直してください（タグがあれば、そのコミットをリリースしたものとして、残りの確かめをします）。`,
+      );
+    }
+    if (!commit) {
+      return core.setFailed(`rc タグがないので、どのコミットをリリースしたかがわかりません。Run workflow の commit にリリースしたコミットの SHA を入力して、実行し直してください。`);
+    }
+    const version = versionAt(commit, plan);
+    if (version !== plan.version) {
+      return core.setFailed(
+        `commit に入力した ${input} の VERSION の ${plan.product} が ${plan.version} ではありません（${version}）。リリースしたコミットを確かめてください。リリースタグは打っていません。`,
+      );
+    }
+    target = commit;
     await createTag(github, repo, plan.releaseTag, target, `${plan.product} ${plan.version}`);
-    results.push(`rc タグがないので、${branch} の先頭（${target.slice(0, 7)}）に ${plan.releaseTag} を打ちました。`);
+    results.push(`${plan.releaseTag} を、commit に入力したリリースしたコミット（${target.slice(0, 7)}）に打ちました。`);
+  }
+  // アーカイブしたラベルは付け直せないので、付け直しはアーカイブより先にする。ラベルのチェックをやり直させられなかった PR が
+  // あれば、ここで止める（アーカイブもブランチの削除もしない。やり直したとき、もう一度その PR のチェックをやり直させるため）。
+  // ほかの確かめはしない：その案内に従って先にブランチを消すと、Tag Creation をやり直せなくなるため
+  const recheck = await recheckOpenPulls(github, core, repo, plan, branch);
+  results.push(...recheck.lines);
+  if (recheck.unchecked.length > 0) {
+    await report(core, `${plan.releaseTag} のリリース`, results);
+    return core.setFailed(
+      `${prList(recheck.unchecked)} からリリースラベルを外せず、ラベルのチェックをやり直させられませんでした。` +
+        'ラベルのアーカイブとブランチの削除はしていません。ブランチは消さずに、実行し直してください（ほかの確かめは、そのときにします）。' +
+        '外せないことが続くときは、その PR からリリースラベルを手で外してから実行し直してください。',
+    );
   }
   results.push(await archiveReleaseLabel(github, core, repo, plan.releaseTag));
 
-  // このジョブはリリースブランチをチェックアウトして動くので、ブランチはある
+  const problems = [];
+  // 実行し直しても消えない問題（リリースより後のコミットなど）の数。それだけが残ったときは、管理者にブランチの削除を頼む
+  let lasting = 0;
+
+  // ブランチを消す前に、このリリースに入っていないものが残っていないかを確かめる。残っていれば消さずに止める
+  // （消すと、そのブランチへの PR は黙って閉じられ、その変更がどのリリースにも入らなくなる）
   const head = (await github.rest.git.getRef({ ...repo, ref: `heads/${branch}` })).data.object.sha;
-  let lateError = null;
+  let late = { pulls: [], unmatched: [] };
   if (head !== target) {
-    const late = await pullsNotIn(github, repo, target, branch);
-    lateError =
-      `${branch} には ${plan.latestRcTag ?? plan.releaseTag} より後のコミットがあり、今回のリリースには入っていません（${prList(late) || '不明'}）。ブランチは消していません。` +
-      `次の修正に入れるなら、管理者がこのブランチを削除して Hotfix Preparation を実行してください。${guideForLateChanges(late)}`;
-  } else {
-    const open = await github.paginate(github.rest.pulls.list, { ...repo, state: 'open', base: branch, per_page: 100 });
-    if (open.length > 0) core.warning(`${branch} に向けた開いている PR（${prList(open)}）は、ブランチの削除で閉じられます。`);
-    await github.rest.git.deleteRef({ ...repo, ref: `heads/${branch}` });
-    results.push(`${branch} を削除しました。`);
+    late = await lateCommits(github, repo, target, head, branch);
+    const commits = [prList(late.pulls), late.unmatched.length > 0 ? `PR が見つからないコミット ${commitList(late.unmatched)}` : ''].filter(Boolean).join('、');
+    let guide = await guideForFixPhase(github, repo, late.pulls.map((pull) => ({ number: pull.number, headRef: pull.head.ref })), plan);
+    if (late.unmatched.length > 0) {
+      guide += `PR が見つからないコミット（${commitList(late.unmatched)}）の変更は、修正フェーズのブランチに cherry-pick して PR を出してください（ラベルは ${await fixPhaseLabel(github, repo, plan.product)}）。`;
+    }
+    problems.push(
+      `${branch} には ${plan.latestRcTag ?? plan.releaseTag} より後のコミットがあり、今回のリリースには入っていません（${commits}）。` +
+        'ブランチは消していません（実行し直しても変わりません）。' +
+        (guide ? `修正フェーズに入れる変更は、Hotfix Preparation のあと、次のとおりにしてください。${guide}` : ''),
+    );
+    lasting += 1;
+  }
+  // リリースしたコミットに入っていない変更を確かめる。リリースしたコミットより後に cherry-pick で入った変更は、上の
+  // 「後から入ったコミット」として知らせているので、ここでは重ねて数えない
+  const lateOriginals = new Set(late.pulls.map((pull) => parseCherryPickBranch(pull.head.ref)).filter((number) => number !== null));
+  const found = await findMissingChanges(github, repo, target, plan);
+  const missing = found.missing.filter((pull) => !lateOriginals.has(pull.number));
+  if (missing.length > 0) problems.push(missingError(branch, { missing, unmatched: [] }, { afterRelease: true }));
+  if (found.unmatched.length > 0) {
+    problems.push(missingError(branch, { missing: [], unmatched: found.unmatched }, { afterRelease: true }));
+    lasting += 1;
+  }
+  // ブランチを消すと閉じられる PR（このブランチに向けた PR と、このブランチから出した PR）を、開き直された回数とともに覚えておく
+  const checked = await branchPulls(github, repo, branch);
+  const openTo = checked.to.filter((pull) => pull.state === 'OPEN');
+  const openFrom = checked.from.filter((pull) => pull.state === 'OPEN');
+  if (openFrom.length > 0) {
+    problems.push(`${branch} から出した PR がまだ開いています（${prList(openFrom)}）。ブランチを消すと閉じられるので、消していません。マージするか閉じてから実行し直してください。`);
+  }
+  if (openTo.length > 0) {
+    problems.push(
+      `${branch} に向けた PR がまだ開いています（${prList(openTo)}）。今回のリリースには入っていないので、ブランチは消していません。` +
+        'cherry-pick の PR なら、元の PR のリリースラベルをこのブランチより新しいバージョンに付け替えてから閉じてください。' +
+        'それ以外の PR も閉じてください。入れる変更なら、ブランチが消えたあと Hotfix Preparation で作るブランチに出し直してください。そのあと実行し直してください。',
+    );
+  }
+  if (problems.length === 0) {
+    let deleted = false;
+    try {
+      deleted = await deleteBranchIfAt(github, repo, branch, head);
+      if (!deleted) problems.push(`確かめている間に ${branch} が更新されたので、ブランチは消していません。実行し直してください。`);
+    } catch (error) {
+      problems.push(`${branch} を削除できませんでした（${error.message}）。実行し直してください。`);
+    }
+    if (deleted) {
+      results.push(`${branch} を削除しました。`);
+      // 確かめたときには開いていなかった（なかったか、閉じていた）のに、そのあと開かれたか開き直された PR を探す。確かめたときに
+      // 開いていた PR があれば消していないので、マージされていない PR のうち、まだ開いているもの、確かめたときになかったもの、
+      // 開き直された回数が増えたものがそれにあたる（時刻は比べない）
+      const reopenedAtCheck = new Map([...checked.to, ...checked.from].map((pull) => [pull.number, pull.reopened]));
+      const after = await branchPulls(github, repo, branch);
+      const reopened = (pulls) => pulls.filter((pull) => pull.state !== 'MERGED' && (pull.state === 'OPEN' || reopenedAtCheck.get(pull.number) !== pull.reopened));
+      const lateTo = reopened(after.to);
+      const lateFrom = reopened(after.from);
+      if (lateTo.length > 0) {
+        problems.push(
+          `確かめたあとに開かれた（開き直された）${branch} に向けた PR（${prList(lateTo)}）があり、マージされないままブランチを消しました。` +
+            `これらの PR は閉じられ、今回のリリースには入っていません。修正フェーズに入れる変更は、Hotfix Preparation でブランチを作ったあと、次のとおりにしてください。` +
+            (await guideForFixPhase(github, repo, lateTo, plan)),
+        );
+      }
+      if (lateFrom.length > 0) {
+        problems.push(
+          `確かめたあとに開かれた（開き直された）${branch} から出した PR（${prList(lateFrom)}）があり、ブランチを消したので閉じられます。` +
+            `ブランチの中身は ${plan.releaseTag} と同じです。必要なら、タグ ${plan.releaseTag} からブランチを作って PR を出し直してください。`,
+        );
+      }
+    }
+  }
+  // 実行し直しても消えない問題だけなら、ブランチを残す理由はもうないので、確かめてから消してもらう
+  // （ほかの問題があるうちに消すと、そのブランチへの PR が閉じられたり、Tag Creation をやり直せなくなったりする）
+  if (lasting > 0 && lasting === problems.length) {
+    problems.push('ほかに片付ける問題はありません。確かめたら、管理者がこのブランチを削除してください（消さないと Hotfix Preparation を実行できません）。');
   }
   await report(core, `${plan.releaseTag} のリリース`, results);
-  if (lateError) core.setFailed(lateError);
+  if (problems.length > 0) core.setFailed(problems.join('\n'));
+}
+
+// ブランチを消すと閉じられる PR（このブランチに向けた PR と、このブランチから出した PR）を、{ to, from } で返す。
+// どちらも { number, state（OPEN・CLOSED・MERGED）, headRef, reopened（開き直された回数） }。一覧はカーソルで送るので、途中の更新でずれない
+async function branchPulls(github, repo, branch) {
+  const query = `query($owner: String!, $repo: String!, $base: String, $head: String, $after: String) {
+    repository(owner: $owner, name: $repo) {
+      pullRequests(baseRefName: $base, headRefName: $head, first: 100, after: $after, orderBy: { field: CREATED_AT, direction: ASC }) {
+        nodes { number state headRefName isCrossRepository timelineItems(itemTypes: [REOPENED_EVENT]) { filteredCount } }
+        pageInfo { hasNextPage endCursor }
+      }
+    }
+  }`;
+  const list = async (filter) => {
+    const pulls = [];
+    let after = null;
+    do {
+      const { repository } = await github.graphql(query, { owner: repo.owner, repo: repo.repo, ...filter, after });
+      const page = repository.pullRequests;
+      for (const node of page.nodes) {
+        pulls.push({
+          number: node.number,
+          state: node.state,
+          headRef: node.headRefName,
+          crossRepository: node.isCrossRepository,
+          reopened: node.timelineItems.filteredCount,
+        });
+      }
+      after = page.pageInfo.hasNextPage ? page.pageInfo.endCursor : null;
+    } while (after);
+    return pulls;
+  };
+  // フォークの同じ名前のブランチから出した PR は、このブランチを消しても閉じられない
+  return { to: await list({ base: branch }), from: (await list({ head: branch })).filter((pull) => !pull.crossRepository) };
+}
+
+// リリースしたバージョンのラベルが付いた開いている PR と、このブランチに向けた開いている PR は、ラベルを付け直して、
+// ラベルのチェックをやり直させる（リリースしてもイベントは起きないので、前の成功のままマージできてしまう。やり直すと、
+// リリース済みのラベル・リリース済みのマージ先として止まる）。このブランチに向けた PR は、この製品のリリースラベルを付け直す
+// （付いていない PR は、もうラベルのチェックで止まっている）。
+// 戻り値：{ lines（結果）, unchecked（ラベルを外せず、チェックをやり直させられなかった PR） }
+async function recheckOpenPulls(github, core, repo, plan, branch) {
+  const label = plan.releaseTag;
+  const none = { lines: [], unchecked: [] };
+  // アーカイブしたラベルは付け直せない。アーカイブするのは、すべての PR のチェックをやり直させたあとだけ
+  let labelExists = true;
+  try {
+    if ((await github.rest.issues.getLabel({ ...repo, name: label })).data.archived_at) return none;
+  } catch (error) {
+    if (error.status !== 404) throw error;
+    labelExists = false; // ラベルがなくても、このブランチに向けた PR はやり直させる
+  }
+  const pulls = new Map(); // 番号 → { number, label（付け直すラベル） }
+  if (labelExists) {
+    for (const issue of await github.paginate(github.rest.issues.listForRepo, { ...repo, labels: label, state: 'open', per_page: 100 })) {
+      if (issue.pull_request) pulls.set(issue.number, { number: issue.number, label });
+    }
+  }
+  for (const pull of await github.paginate(github.rest.pulls.list, { ...repo, state: 'open', base: branch, per_page: 100 })) {
+    const name = pull.labels.map((item) => item.name).find((item) => item.startsWith(`${plan.product}/v`));
+    if (name && !pulls.has(pull.number)) pulls.set(pull.number, { number: pull.number, label: name });
+  }
+  if (pulls.size === 0) return none;
+  const rechecked = [];
+  const relabelFailed = [];
+  const removedElsewhere = [];
+  const unchecked = [];
+  for (const pull of pulls.values()) {
+    try {
+      await github.rest.issues.removeLabel({ ...repo, issue_number: pull.number, name: pull.label });
+    } catch (error) {
+      // ほかで先に外されていれば、そのイベントでラベルのチェックはやり直される
+      if (error.status === 404) {
+        removedElsewhere.push(pull);
+        continue;
+      }
+      unchecked.push(pull);
+      core.warning(`#${pull.number} からラベル ${pull.label} を外せませんでした（${error.message}）。`);
+      continue;
+    }
+    rechecked.push(pull);
+    try {
+      await github.rest.issues.addLabels({ ...repo, issue_number: pull.number, labels: [pull.label] });
+    } catch (error) {
+      // 付け直せなくても、外したことでラベルのチェックはやり直される（ラベルがないとして止まる）
+      relabelFailed.push(pull);
+      core.warning(`#${pull.number} にラベル ${pull.label} を付け直せませんでした（${error.message}）。外したままです。`);
+    }
+  }
+  const lines = [];
+  if (rechecked.length > 0) {
+    lines.push(
+      `ラベル ${label} が付いた開いている PR と ${branch} に向けた開いている PR（${prList(rechecked)}）は、リリースラベルを付け直してラベルのチェックをやり直させました（リリース済みとして止まります）。`,
+    );
+  }
+  if (relabelFailed.length > 0) lines.push(`そのうち ${prList(relabelFailed)} は、リリースラベルを付け直せず、外したままです（ラベルのチェックは、ラベルがないとして止まります）。`);
+  if (removedElsewhere.length > 0) lines.push(`${prList(removedElsewhere)} は、先にほかでリリースラベルが外されていました（そのときにラベルのチェックはやり直されています）。`);
+  if (unchecked.length > 0) lines.push(`${prList(unchecked)} は、リリースラベルを外せず、ラベルのチェックをやり直させられませんでした。`);
+  return { lines, unchecked };
 }
 
 module.exports = { releaseCandidate, release };

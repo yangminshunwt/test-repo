@@ -29,7 +29,7 @@ async function prepare({ github, context, core }) {
   const releasedBranch = `release/${product}/v${plan.releasedVersion}`;
   if (await branchExists(github, repo, releasedBranch)) {
     return core.setFailed(
-      `${releasedBranch} がまだあります。リリース手順の最後のとおり、リリースタグより後のコミットや開いている cherry-pick の PR がないかを確かめてから削除し（削除は管理者だけができます）、実行し直してください。`,
+      `${releasedBranch} がまだあります。先に Tag Creation の release を実行し直し、その案内に従ってください（ブランチを消すと Tag Creation をやり直せないので、管理者がブランチを消すのは、その案内で求められたときだけにしてください）。そのあと実行し直してください。`,
     );
   }
 

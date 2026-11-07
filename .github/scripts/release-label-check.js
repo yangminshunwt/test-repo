@@ -22,6 +22,10 @@ module.exports = async ({ github, context, core }) => {
   });
   const labels = labelObjects.map((label) => label.name);
   const archivedLabels = labelObjects.filter((label) => label.archived_at).map((label) => label.name);
+  // リリースタグがあるラベル（リリース済みのバージョン）。ラベルのアーカイブに失敗していても止めるため、タグでも確かめる
+  const tagRefs = await github.paginate(github.rest.git.listMatchingRefs, { owner, repo, ref: 'tags/', per_page: 100 });
+  const tagNames = new Set(tagRefs.map((ref) => ref.ref.replace(/^refs\/tags\//, '')));
+  const releasedLabels = labels.filter((label) => tagNames.has(label));
 
   // チェックアウトされているのは PR をマージした結果のコミットで、その第 1 親がマージ前のマージ先になる。
   const versionFile = fs.readFileSync('VERSION', 'utf8');
@@ -52,6 +56,8 @@ module.exports = async ({ github, context, core }) => {
     baseVersionFile,
     branches,
     archivedLabels,
+    releasedLabels,
+    baseReleased: baseBranch.startsWith('release/') && tagNames.has(baseBranch.slice('release/'.length)),
   });
   if (affected.reason) warnings.unshift(affected.reason);
 
