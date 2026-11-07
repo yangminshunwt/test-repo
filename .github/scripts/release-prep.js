@@ -3,9 +3,9 @@
 
 const { execFileSync } = require('child_process');
 const fs = require('fs');
-const { compareShas, mergedPullsForCommits, prList, report } = require('./github-helpers.js');
+const { branchExists, compareShas, mergedPullsForCommits, prList, readFile, report } = require('./github-helpers.js');
 const { createReleaseBranch, createReleaseLabel } = require('./release-branch.js');
-const { compareVersions, extractReleaseLabels, parseReleaseBranch, planReleasePrep, setVersion } = require('./release-labels.js');
+const { compareVersions, extractReleaseLabels, parseReleaseBranch, parseVersionFile, planReleasePrep, setVersion } = require('./release-labels.js');
 
 // リリースブランチと次のバージョンのリリースラベルを作り、作業場所の VERSION を次のバージョンに書き換える。
 // やり直したときも続きから進められるよう、すでにあるブランチやラベルはそのまま使う。
@@ -13,11 +13,35 @@ async function prepare({ github, context, core }) {
   const repo = context.repo;
   if (context.ref !== 'refs/heads/main') return core.setFailed(`main ブランチで実行してください（今は ${context.ref}）。`);
   const product = process.env.PRODUCT;
-  // チェックアウトしたのは、ジョブを始めた時点の最新の main（Re-run でも、そのときの main になる）
+  // どのバージョンを準備するかは、実行を始めた時点（Run workflow を押したとき）の main の VERSION で決める。
+  // Re-run でも同じになるので、その間に VERSION を上げる PR がマージされていても、次のバージョンの準備を始めない
+  const plan = planReleasePrep({ versionFile: (await readFile(github, repo, 'VERSION', context.sha)) ?? '', product, bump: process.env.BUMP });
+  if (plan.error) return core.setFailed(plan.error);
+  // ブランチと VERSION を上げる PR は、チェックアウトした、ジョブを始めた時点の最新の main から作る
   const sha = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
   const versionFile = fs.readFileSync('VERSION', 'utf8');
-  const plan = planReleasePrep({ versionFile, product, bump: process.env.BUMP });
-  if (plan.error) return core.setFailed(plan.error);
+  const version = parseVersionFile(versionFile)[product];
+  if (version === plan.nextVersion && (await branchExists(github, repo, plan.releaseBranch))) {
+    // この準備の VERSION を上げる PR は、もうマージされている（Re-run したときなど）。cherry-pick のやり直しだけをする
+    await report(core, `${product} のリリースの準備（${plan.currentVersion} → ${plan.nextVersion}）`, [
+      `main の VERSION の ${product} はもう ${plan.nextVersion} で、${plan.releaseBranch} もあるので、ブランチと PR は作りません。`,
+    ]);
+    core.setOutput('bumped', 'true');
+    core.setOutput('release_branch', plan.releaseBranch);
+    return;
+  }
+  if (version === plan.nextVersion) {
+    return core.setFailed(
+      `この準備（${product} の ${plan.currentVersion} → ${plan.nextVersion}）は済んでいて、${plan.releaseBranch} ももうありません（リリースして消したもの）。` +
+        'することはありません（Re-run しても同じ結果になります）。',
+    );
+  }
+  if (version !== plan.currentVersion) {
+    return core.setFailed(
+      `実行を始めたあとに main の VERSION の ${product} が ${plan.currentVersion} から ${version} に変わったので、この準備（${plan.currentVersion} → ${plan.nextVersion}）は進められません（Re-run しても同じ結果になります）。` +
+        `${version} のリリースの準備が要るときだけ、Actions の「Release Preparation」→「Run workflow」で新しく実行してください。`,
+    );
+  }
 
   // 同じ製品を別のバージョンに上げる PR が開いていると、どちらもマージできてしまうので止める
   const prefix = `release-prep/${product}/`;

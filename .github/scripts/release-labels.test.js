@@ -32,8 +32,8 @@ const BRANCHES = [
 ];
 
 // version / baseVersion：マージ後とマージ前の VERSION。baseVersion を省くと VERSION は変えない PR になる。
-function check({ baseBranch = 'main', labels, affectedProducts = ['product-a'], version = versionFile('1.5.0', '1.5.0'), baseVersion = version, branches = BRANCHES, archivedLabels = [], releasedLabels = [] }) {
-  return checkReleaseLabels({ baseBranch, labels, affectedProducts, versionFile: version, baseVersionFile: baseVersion, branches, archivedLabels, releasedLabels });
+function check({ baseBranch = 'main', labels, affectedProducts = ['product-a'], version = versionFile('1.5.0', '1.5.0'), baseVersion = version, branches = BRANCHES, archivedLabels = [], releasedLabels = [], baseReleased = false }) {
+  return checkReleaseLabels({ baseBranch, labels, affectedProducts, versionFile: version, baseVersionFile: baseVersion, branches, archivedLabels, releasedLabels, baseReleased });
 }
 
 function assertOk(result) {
@@ -398,4 +398,18 @@ test('リリースタグがあるか、アーカイブ済みのラベルは NG�
   const result = check({ labels: ['product-a/v1.4.0'], archivedLabels: ['product-a/v1.4.0'] });
   assertError(result, /リリース済みのバージョンです/);
   assert.equal(result.errors.length, 1);
+});
+
+test('リリースしたあとも残しているリリースブランチへの PR は、ラベルのバージョンによらず NG', () => {
+  const base = { baseBranch: 'release/product-a/v1.4.0', version: versionFile('1.4.0', '1.4.0'), branches: [...BRANCHES, 'release/product-a/v1.3.1'] };
+  // 古いバージョン（まだリリースしていない修正フェーズのブランチ）のラベルでも止める
+  const older = check({ ...base, labels: ['product-a/v1.3.1'], baseReleased: true });
+  assertError(older, /release\/product-a\/v1\.4\.0 はリリース済みです/);
+  assert.equal(older.errors.length, 1);
+  // リリースしていないブランチへの同じ PR は通る
+  assertOk(check({ ...base, labels: ['product-a/v1.3.1'] }));
+  // マージ先のバージョンのラベルがリリース済みなら、マージ先のタグが取れなくても止める（同じことを 2 回は言わない）
+  const same = check({ ...base, labels: ['product-a/v1.4.0'], archivedLabels: ['product-a/v1.4.0'] });
+  assertError(same, /release\/product-a\/v1\.4\.0 はリリース済みです/);
+  assert.equal(same.errors.length, 1);
 });

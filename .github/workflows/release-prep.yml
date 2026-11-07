@@ -36,7 +36,8 @@ jobs:
       actions: write # ブランチを作る間にマージされた PR の cherry-pick をやり直す
       pull-requests: read
     steps:
-      # 実行を始めた時点ではなく、ジョブを始めた時点の最新の main から作る（Re-run でも今の main になる）
+      # ブランチと PR は、実行を始めた時点ではなく、ジョブを始めた時点の最新の main から作る（Re-run でも今の main になる）。
+      # どのバージョンを準備するかは、実行を始めた時点の main の VERSION で決める（release-prep.js）
       - uses: actions/checkout@v7
         with:
           ref: main
@@ -64,7 +65,9 @@ jobs:
             const { prepare } = require('./.github/scripts/release-prep.js')
             await prepare({ github, context, core })
 
+      # この準備の VERSION を上げる PR がもうマージされていれば（Re-run したときなど）、PR は作らない
       - id: pull-request
+        if: steps.prepare.outputs.bumped != 'true'
         uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
         with:
           token: ${{ steps.app-token.outputs.token }}
@@ -84,6 +87,7 @@ jobs:
             この PR がコンフリクトしたら（ほかの製品の VERSION を上げる PR が先にマージされたときなど）、Actions の「Release Preparation」を同じ製品でもう一度実行すると、最新の `main` の上に作り直されます。
 
       - name: Summary
+        if: steps.prepare.outputs.bumped != 'true'
         env:
           PR_URL: ${{ steps.pull-request.outputs.pull-request-url }}
           OPERATION: ${{ steps.pull-request.outputs.pull-request-operation }}

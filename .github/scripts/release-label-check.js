@@ -57,6 +57,7 @@ module.exports = async ({ github, context, core }) => {
     branches,
     archivedLabels,
     releasedLabels,
+    baseReleased: baseBranch.startsWith('release/') && tagNames.has(baseBranch.slice('release/'.length)),
   });
   if (affected.reason) warnings.unshift(affected.reason);
 

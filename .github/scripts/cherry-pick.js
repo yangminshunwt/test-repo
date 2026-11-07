@@ -116,7 +116,7 @@ async function fixPhaseLabelGuide(github, repo, originalNumber, product) {
 async function releasedLabelProblem(github, repo, pr, label) {
   const base = parseReleaseBranch(pr.base.ref);
   const original = parseCherryPickBranch(pr.head.ref);
-  const head = `${label}：このバージョンは、この変更を含まずにリリースされています。`;
+  const head = `${label}：このバージョンは、この PR のコミット（マージコミットか、マージした cherry-pick の PR のマージコミット）を含まずにリリースされています。`;
   const hotfix = '修正フェーズに入れるなら、Hotfix Preparation でブランチを作ったあと、そのブランチのバージョンにします';
   if (!base) return `${head}この変更が最初に入るリリースのバージョンに付け替えてから、Cherry-Pick の Run workflow でやり直してください（${hotfix}）。`;
   if (label === `${base.product}/v${base.version}`) {
@@ -159,7 +159,7 @@ async function computeTargets(github, repo, pr) {
     const tag = tags.get(`${release.product}/v${release.version}`);
     // リリース済みの行き先（リリースより後のコミットがあって残しているブランチ）に入れても、どのリリースにも入らない
     if (tag) {
-      if (!(await inRelease(tag))) problems.push(`${target} はリリース済み（タグがあります）なので、cherry-pick しません。この変更は v${release.version} には入っていません。`);
+      if (!(await inRelease(tag))) problems.push(`${target} はリリース済み（タグがあります）なので、cherry-pick しません。この PR のコミットは v${release.version} のリリースには入っていません。`);
       continue;
     }
     // もう入っている行き先（この変更より後に作ったブランチ、この変更が入ったタグから作った修正フェーズのブランチ、

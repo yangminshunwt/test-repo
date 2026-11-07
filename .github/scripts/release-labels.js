@@ -111,7 +111,8 @@ function extractReleaseLabels(labels, products) {
 // branches: 今あるブランチの名前（リリースブランチを含む）
 // archivedLabels: PR に付いているラベルのうち、アーカイブ済みのもの（リリース手順でリリース済みのラベルをアーカイブする）
 // releasedLabels: リリースタグ（<製品名>/vX.Y.Z）があるラベル。アーカイブより先にタグが打たれるので、タグでも確かめる
-function checkReleaseLabels({ baseBranch, labels, affectedProducts, versionFile, baseVersionFile, branches, archivedLabels = [], releasedLabels = [] }) {
+// baseReleased: マージ先がリリースブランチで、そのバージョンのリリースタグがある（リリースしたあとも残しているブランチ）
+function checkReleaseLabels({ baseBranch, labels, affectedProducts, versionFile, baseVersionFile, branches, archivedLabels = [], releasedLabels = [], baseReleased = false }) {
   const versions = parseVersionFile(versionFile);
   const baseVersions = parseVersionFile(baseVersionFile);
   const products = Object.keys(versions);
@@ -126,6 +127,7 @@ function checkReleaseLabels({ baseBranch, labels, affectedProducts, versionFile,
   }
 
   let release = null;
+  let releasedBase = false; // マージ先が、リリースしたあとも残しているリリースブランチか
   let requiredProducts;
   if (baseBranch === 'main') {
     requiredProducts = [...new Set([...affectedProducts.filter((product) => products.includes(product)), ...bumpedProducts])];
@@ -143,6 +145,18 @@ function checkReleaseLabels({ baseBranch, labels, affectedProducts, versionFile,
       }
     }
     releaseLabels = releaseLabels.filter(({ product }) => product === release.product);
+    // リリースしたあとも残しているリリースブランチ（リリースより後のコミットがあったもの）への PR は、ラベルのバージョンによらず、
+    // そのブランチに入れてもどのリリースにも入らない
+    const isReleased = (label) => archivedLabels.includes(label) || releasedLabels.includes(label);
+    releasedBase = baseReleased || releaseLabels.some(({ label, version }) => version === release.version && isReleased(label));
+    if (releasedBase) {
+      errors.push(
+        `${baseBranch} はリリース済みです（このブランチに入れても、どのリリースにも入りません）。この PR はマージせずに閉じてください。` +
+          'cherry-pick の PR なら、先に元の PR のリリースラベルをこのブランチより新しいバージョンに付け替えてください。' +
+          '閉じたあと Tag Creation の release を実行し直してください（リリースより後のコミットがあってブランチが残るときは、その実行の案内に従ってください）。' +
+          '入れる変更なら、ブランチが消えたあと Hotfix Preparation で作るブランチに出し直してください。',
+      );
+    }
     if (versions[release.product] !== release.version) {
       errors.push(
         `マージ後の VERSION（${release.product}/${versions[release.product]}）が、マージ先のブランチのバージョン（v${release.version}）と一致しません。先に VERSION を上げるか、作業ブランチを切ったブランチを確かめてください。`,
@@ -202,16 +216,8 @@ function checkReleaseLabels({ baseBranch, labels, affectedProducts, versionFile,
   for (const { label, product, version } of releaseLabels) {
     const upper = release ? release.version : versions[product];
     if (archivedLabels.includes(label) || releasedLabels.includes(label)) {
-      // リリースしたあとも残しているリリースブランチ（リリースより後のコミットがあったもの）への PR は、そのブランチに入れても
-      // どのリリースにも入らない
-      errors.push(
-        release && version === release.version
-          ? `${label}：${baseBranch} はリリース済みです（このブランチに入れても、どのリリースにも入りません）。この PR はマージせずに閉じてください。` +
-            'cherry-pick の PR なら、先に元の PR のリリースラベルをこのブランチより新しいバージョンに付け替えてください。' +
-            '閉じたあと Tag Creation の release を実行し直してください（リリースより後のコミットがあってブランチが残るときは、その実行の案内に従ってください）。' +
-            '入れる変更なら、ブランチが消えたあと Hotfix Preparation で作るブランチに出し直してください。'
-          : `${label}：リリース済みのバージョンです。これから入るリリースのバージョンを付けてください。`,
-      );
+      // リリース済みのマージ先は、上で止めている
+      if (!releasedBase) errors.push(`${label}：リリース済みのバージョンです。これから入るリリースのバージョンを付けてください。`);
     } else if (compareVersions(version, upper) > 0) {
       const target = release ? `マージ先のブランチのバージョン（v${upper}）` : `マージ後の VERSION（${product}/${upper}）`;
       // main で、VERSION を上げる PR（Release Preparation が作ったもの）のマージ待ちのことがある
