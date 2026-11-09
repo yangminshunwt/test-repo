@@ -60,6 +60,20 @@ jobs:
             const { prepare } = require('./.github/scripts/release-prep.js')
             await prepare({ github, context, core })
 
+      # create-pull-request は、この作業場所に浅い fetch（--depth）をして履歴を切り詰めることがあるので、その前に、すべての履歴で確かめる
+      - name: Catch up cherry-picks
+        uses: actions/github-script@v9
+        env:
+          PRODUCT: ${{ inputs.product }}
+          VERSION: ${{ steps.prepare.outputs.current_version }}
+          RELEASE_BRANCH: ${{ steps.prepare.outputs.release_branch }}
+          BRANCH_SHA: ${{ steps.prepare.outputs.branch_sha }}
+        with:
+          retries: 3 # GitHub API の一時的なエラー（5xx）はやり直す
+          script: |
+            const { catchUp } = require('./.github/scripts/changes.js')
+            await catchUp({ github, context, core })
+
       - id: pull-request
         uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
         with:
@@ -77,19 +91,6 @@ jobs:
             `${{ steps.prepare.outputs.release_branch }}` はもう作ってあります。この PR がマージされるまで、${{ inputs.product }} の次のバージョン向けの PR は `main` にマージできないので、早めにマージしてください。
 
             この PR がコンフリクトしたら（ほかの製品の VERSION を上げる PR が先にマージされたときなど）、Actions の「Release Preparation」を同じ製品でもう一度実行すると、最新の `main` の上に作り直されます。
-
-      - name: Catch up cherry-picks
-        uses: actions/github-script@v9
-        env:
-          PRODUCT: ${{ inputs.product }}
-          VERSION: ${{ steps.prepare.outputs.current_version }}
-          RELEASE_BRANCH: ${{ steps.prepare.outputs.release_branch }}
-          BRANCH_SHA: ${{ steps.prepare.outputs.branch_sha }}
-        with:
-          retries: 3 # GitHub API の一時的なエラー（5xx）はやり直す
-          script: |
-            const { catchUp } = require('./.github/scripts/release-prep.js')
-            await catchUp({ github, context, core })
 
       - name: Summary
         env:

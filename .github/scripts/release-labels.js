@@ -96,7 +96,7 @@ function checkReleaseLabels({ baseBranch, labels, affectedProducts, versionFile,
   } else {
     release = parseReleaseBranch(baseBranch);
     if (!release || !products.includes(release.product)) {
-      return { errors: [`マージ先の ${baseBranch} は、main でも release/<製品名>/vX.Y.Z の形式のリリースブランチでもありません。`], releaseLabels };
+      return { errors: [`マージ先の ${baseBranch} は、main でも release/<製品名>/vX.Y.Z の形式のリリースブランチでもありません。`] };
     }
     requiredProducts = [release.product];
     for (const { label, product } of releaseLabels) {
@@ -165,7 +165,7 @@ function checkReleaseLabels({ baseBranch, labels, affectedProducts, versionFile,
     }
   }
 
-  return { errors, releaseLabels };
+  return { errors };
 }
 
 // PR の変更が、product の version のリリースに入るべきか（開発ルールの「リリースラベル」）。
@@ -259,7 +259,6 @@ module.exports = {
   checkReleaseLabels,
   cherryPickBranch,
   compareVersions,
-  extractReleaseLabels,
   findAffectedProducts,
   findCherryPickTargets,
   parseCherryPickBranch,

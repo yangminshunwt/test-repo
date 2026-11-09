@@ -18,8 +18,6 @@ permissions:
 jobs:
   release-label-check:
     name: release label check
-    # 閉じた PR（マージ後にラベルを直したときなど）はもうマージしないので、チェックしない
-    if: github.event.pull_request.state == 'open'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -52,7 +50,6 @@ jobs:
         uses: actions/github-script@v9
         env:
           BASE_REF: ${{ steps.base.outputs.base_ref }}
-          BASE_SHA: ${{ steps.base.outputs.base_sha }}
           LABELS: ${{ steps.base.outputs.labels }}
           AFFECTED_PRODUCTS: ${{ steps.products.outputs.changes }}
           ALL_FILE_COUNT: ${{ steps.products.outputs.all_count }}

@@ -100,7 +100,7 @@ jobs:
         with:
           retries: 3 # GitHub API の一時的なエラー（5xx）はやり直す
           script: |
-            const { catchUp } = require('./.github/scripts/hotfix-prep.js')
+            const { catchUp } = require('./.github/scripts/changes.js')
             await catchUp({ github, context, core })
 
       - name: Summary

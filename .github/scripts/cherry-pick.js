@@ -2,7 +2,7 @@
 'use strict';
 
 const { containsChange, listMergedPulls } = require('./changes.js');
-const { deleteBranchIfAt, listReleaseBranches } = require('./github-helpers.js');
+const { branchHead, deleteBranchIfAt, localReleaseBranches } = require('./github-helpers.js');
 const { cherryPickBranch, findCherryPickTargets, parseReleaseBranch } = require('./release-labels.js');
 
 // backport-action が cherry-pick のコミットに使う committer（action.yml の git_committer_email の既定）
@@ -22,7 +22,8 @@ function cherryPickPulls(github, repo, target, state) {
   return github.paginate(github.rest.pulls.list, { ...repo, state, head: `${repo.owner}:${cherryPickBranch(prNumber(), target)}`, per_page: 100 });
 }
 
-// 元の PR の cherry-pick 先を、今の状態から決めて出力する。
+// 元の PR の cherry-pick 先を決めて出力する（今あるリリースブランチと、変更が入っているかは、どちらもチェックアウトした時点のものを見る。
+// そのあとに作られたブランチには、作った Release Preparation・Hotfix Preparation が、入っていない変更の Cherry-Pick を実行する）。
 // targets：リリースラベルが表す範囲の、今あるリリースブランチ（cherry-pick の PR にラベルを付ける行き先）
 // branches：そのうち、cherry-pick の PR が開いてもマージされてもいなくて、変更もまだ入っていない行き先（これから cherry-pick する）
 // 前の実行の残りのブランチ（閉じた PR のものか、自動化が作ったもの）は消す。残っていると backport-action がその古い中身で PR を作るため。
@@ -31,7 +32,7 @@ async function selectTargets({ github, context, core }) {
   const repo = context.repo;
   const { data: pr } = await github.rest.pulls.get({ ...repo, pull_number: prNumber() });
   if (!pr.merged) return core.setFailed(`#${pr.number} はマージされていません。`);
-  const targets = findCherryPickTargets({ base: pr.base.ref, head: pr.head.ref, labels: pr.labels.map((label) => label.name) }, await listReleaseBranches(github, repo));
+  const targets = findCherryPickTargets({ base: pr.base.ref, head: pr.head.ref, labels: pr.labels.map((label) => label.name) }, localReleaseBranches().map(([name]) => name));
   core.setOutput('targets', targets.join(' '));
 
   const pulls = targets.length > 0 ? await listMergedPulls(github, repo) : [];
@@ -40,16 +41,12 @@ async function selectTargets({ github, context, core }) {
     const existing = await cherryPickPulls(github, repo, target, 'all');
     if (existing.some((pull) => pull.state === 'open' || pull.merged_at)) {
       core.info(`${target}：cherry-pick の PR があります。`);
-    } else if (containsChange('.', pulls, { number: pr.number, mergeCommit: pr.merge_commit_sha }, `origin/${target}`)) {
+    } else if (containsChange(pulls, { number: pr.number, mergeCommit: pr.merge_commit_sha }, `refs/remotes/origin/${target}`)) {
       core.info(`${target}：変更はもう入っています。`);
     } else {
       const branch = cherryPickBranch(pr.number, target);
-      const ref = await github.rest.git.getRef({ ...repo, ref: `heads/${branch}` }).catch((error) => {
-        if (error.status === 404) return null;
-        throw error;
-      });
-      if (ref) {
-        const sha = ref.data.object.sha;
+      const sha = await branchHead(github, repo, branch);
+      if (sha) {
         const { data: commit } = await github.rest.git.getCommit({ ...repo, commit_sha: sha });
         if ((existing.some((pull) => pull.head.sha === sha) || commit.committer.email === AUTOMATION_COMMITTER) && (await deleteBranchIfAt(github, repo, branch, sha))) {
           core.info(`${target}：前の実行の残りの ${branch} を消しました。`);
@@ -59,21 +56,21 @@ async function selectTargets({ github, context, core }) {
       core.info(`${target}：これから cherry-pick します。`);
     }
   }
+  if (pending.length > 0 && !(await waitForMergeLink(github, repo, core, pr))) return;
   core.setOutput('branches', pending.join(' '));
 }
 
 // backport-action は、PR が squash でマージされたかを「このコミットを含む PR」の API で見分ける。マージの直後で
 // まだ反映されていないと見分けられず、PR のコミット（Update branch のマージコミットを含む）をそのまま使って失敗するので、反映を待つ。
-async function waitForMergeLink({ github, context, core }) {
-  const repo = context.repo;
-  const { data: pr } = await github.rest.pulls.get({ ...repo, pull_number: prNumber() });
+async function waitForMergeLink(github, repo, core, pr) {
   for (let attempt = 0; attempt < 30; attempt++) {
     const { data } = await github.rest.repos.listPullRequestsAssociatedWithCommit({ ...repo, commit_sha: pr.merge_commit_sha });
-    if (data.some((pull) => pull.number === pr.number)) return;
+    if (data.some((pull) => pull.number === pr.number)) return true;
     core.info(`マージコミット ${pr.merge_commit_sha.slice(0, 7)} と #${pr.number} の結び付きが GitHub に反映されるのを待っています（${attempt + 1} 回目）。`);
     await sleep(5000);
   }
   core.setFailed(`マージコミットと #${pr.number} の結び付きが GitHub に反映されませんでした。しばらくしてから、Actions の「Cherry-Pick」→「Run workflow」で PR の番号 ${pr.number} を指定してやり直してください。`);
+  return false;
 }
 
 // cherry-pick の PR に、行き先のブランチのバージョンのリリースラベルを付ける（元の PR のラベルを写すと、その PR がマージされたときに
@@ -122,4 +119,4 @@ async function reportFailures({ github, context, core }) {
   core.setFailed(reasons.join('\n'));
 }
 
-module.exports = { selectTargets, waitForMergeLink, labelPullRequests, reportFailures };
+module.exports = { selectTargets, labelPullRequests, reportFailures };

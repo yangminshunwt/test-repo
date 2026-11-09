@@ -1,14 +1,11 @@
 // release-label-check.yml と ci.yml から actions/github-script で呼ぶ。
 // 作業場所には、PR の先頭をすべての履歴（ほかのブランチも）つきで取ってある。
-// ルールセットで「マージ先の最新を取り込んでから」スカッシュでマージするので、マージできるときは PR の先頭の中身が
-// マージ後の中身と同じになる。そのため、マージ後の VERSION は PR の先頭、マージ前の VERSION はマージ先との分かれ目から読む。
+// マージ後の中身は、PR の先頭と今のマージ先の先頭を手元でマージして作る（GitHub がテスト用のマージコミットを作るのを待たない）。
+// ルールセットで「マージ先の最新を取り込んでから」マージするので、マージできるときは PR の先頭の中身と同じになる。
 'use strict';
 
-const { execFileSync } = require('child_process');
-const fs = require('fs');
+const { git, localReleaseBranches } = require('./github-helpers.js');
 const { checkReleaseLabels, findAffectedProducts, parseVersionFile } = require('./release-labels.js');
-
-const git = (...args) => execFileSync('git', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
 
 // PR の今のマージ先とラベル（イベントの後に変わっていても今の状態で判定するため、API で取り直す）と、
 // PR の先頭とマージ先との分かれ目（paths-filter が変更を探す起点）を出力する。
@@ -22,8 +19,15 @@ async function findBase({ github, context, core }) {
 async function check({ core }) {
   const env = process.env;
   const baseBranch = env.BASE_REF;
+  const base = `refs/remotes/origin/${baseBranch}`;
   const labels = JSON.parse(env.LABELS);
-  const versionFile = fs.readFileSync('VERSION', 'utf8');
+  let merged;
+  try {
+    merged = git('merge-tree', '--write-tree', base, 'HEAD').split('\n')[0];
+  } catch {
+    return core.setFailed(`${baseBranch} とコンフリクトしています。解消して push すると、もう一度チェックします。`);
+  }
+  const versionFile = git('show', `${merged}:VERSION`);
   const affected = findAffectedProducts({
     matched: JSON.parse(env.AFFECTED_PRODUCTS),
     products: Object.keys(parseVersionFile(versionFile)),
@@ -35,8 +39,8 @@ async function check({ core }) {
     labels,
     affectedProducts: affected.products,
     versionFile,
-    baseVersionFile: git('show', `${env.BASE_SHA}:VERSION`),
-    branches: git('for-each-ref', '--format=%(refname:lstrip=3)', 'refs/remotes/origin/release/').split('\n').filter(Boolean),
+    baseVersionFile: git('show', `${base}:VERSION`),
+    branches: localReleaseBranches().map(([name]) => name),
   });
 
   await core.summary

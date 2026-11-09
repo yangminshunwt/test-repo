@@ -1,14 +1,12 @@
 // release.yml から actions/github-script で呼ぶ処理（開発ルールの「リリース手順」）。
-// 作業場所（RELEASE_WORK。なければ今の場所）に、実行したリリースブランチをすべての履歴（ほかのブランチとタグも）つきで取ってある。
+// 作業場所に、実行したリリースブランチをすべての履歴（ほかのブランチとタグも）つきで取ってある。
+// 判断はすべて、このチェックアウトした時点のものから行う（ブランチの削除も、チェックアウトした先頭のときだけ）。
 'use strict';
 
-const { execFileSync } = require('child_process');
 const { listMergedPulls, missingChanges } = require('./changes.js');
-const { commitsBetween, deleteBranchIfAt, prList, report } = require('./github-helpers.js');
+const { deleteBranchIfAt, git, prList, report } = require('./github-helpers.js');
 const { compareVersions, parseVersionFile, planRelease } = require('./release-labels.js');
 
-const WORK = process.env.RELEASE_WORK || '.';
-const git = (...args) => execFileSync('git', ['-C', WORK, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
 const commitOf = (ref) => git('rev-parse', `${ref}^{commit}`);
 
 // ref の VERSION の、その製品のバージョン（読めなければ null）
@@ -51,7 +49,7 @@ async function releaseCandidate({ github, context, core }) {
     (versionAt(head, plan.product) === plan.version ? null : `${branch} の VERSION の ${plan.product} が ${plan.version} ではありません。先に VERSION を上げる PR をマージしてください。`);
   if (error) return core.setFailed(error);
 
-  const missing = missingChanges(WORK, await listMergedPulls(github, repo), plan.product, plan.version, head);
+  const missing = missingChanges(await listMergedPulls(github, repo), plan.product, plan.version, head);
   if (missing.length > 0) {
     return core.setFailed(
       `ラベルではこのリリースに入るはずなのに、${branch} に入っていない変更があります（${prList(missing)}）。` +
@@ -121,25 +119,25 @@ async function release({ github, context, core }) {
     lines.push(`${plan.releaseTag} を ${released.slice(0, 7)}（${input ? 'commit に入力したコミット' : plan.latestRcTag}）に打ちました。`);
   }
 
-  const head = (await github.rest.git.getRef({ ...repo, ref: `heads/${branch}` })).data.object.sha;
-  const late = await commitsBetween(github, repo, released, head);
+  const head = git('rev-parse', 'HEAD');
+  const late = git('log', '--reverse', '--format=%h %s', `${released}..${head}`).split('\n').filter(Boolean);
   const open = await github.paginate(github.rest.pulls.list, { ...repo, state: 'open', base: branch, per_page: 100 });
-  const missing = missingChanges(WORK, await listMergedPulls(github, repo), plan.product, plan.version, released);
+  const missing = missingChanges(await listMergedPulls(github, repo), plan.product, plan.version, released);
   const problems = [];
   if (late.length > 0) {
-    problems.push(`リリースしたコミットより後に ${branch} に入ったコミットは、このリリースに入っておらず、ブランチの削除で消えます：${late.map((c) => `${c.sha.slice(0, 7)} ${c.subject}`).join('、')}`);
+    problems.push(`リリースしたコミットより後に ${branch} に入ったコミットは、このリリースに入っておらず、ブランチの削除で消えます：${late.join('、')}`);
   }
   if (open.length > 0) problems.push(`${branch} に向けた開いている PR（${prList(open)}）は、このリリースに入っておらず、ブランチの削除で閉じられます。`);
   if (missing.length > 0) {
     problems.push(
       `ラベルではこのリリースに入るはずなのに、入っていない変更があります（${prList(missing)}）。修正フェーズに入れるときは、Hotfix Preparation でブランチを作ると、` +
-        `main やより新しいリリースブランチにマージした変更は自動で cherry-pick されます。${branch} に直接マージした変更は、そのブランチに PR を出し直してください。`,
+        `main やより新しいリリースブランチにマージした変更は自動で cherry-pick されます。${branch} に直接マージした変更は自動では入らないので、そのとき作った修正フェーズのブランチに PR を出し直してください。`,
     );
   }
   await report(core, `${plan.releaseTag} のリリース`, [...lines, ...problems, await archiveLabel(github, repo, plan.releaseTag)]);
 
   if (!(await deleteBranchIfAt(github, repo, branch, head))) {
-    return core.setFailed(`確かめている間に ${branch} にコミットが入ったので、削除していません。実行し直してください。`);
+    return core.setFailed(`この実行を始めたあとに ${branch} にコミットが入ったので、削除していません。実行し直してください。`);
   }
   core.info(`${branch} を削除しました。`);
   await core.summary.addList([`${branch} を削除しました。`]).write();
