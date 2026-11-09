@@ -235,11 +235,6 @@ test('影響する製品：パス設定に書かれていないファイルが�
   assert.match(result.reason, /書かれていないパス/);
 });
 
-test('マージ先が main でもリリースブランチでもなければ NG', () => {
-  assertError(check({ baseBranch: 'release/product-c/v1.0.0', labels: ['product-a/v1.5.0'] }), /マージ先/);
-  assertError(check({ baseBranch: 'release/v1.0.0', labels: ['product-a/v1.5.0'] }), /マージ先/);
-});
-
 test('入るべきバージョン：ラベル以上で、main にマージしたなら上限なし、リリースブランチにマージしたならそのブランチまで', () => {
   const main = { base: 'main', head: 'feature', labels: ['product-a/v1.3.0'] };
   assert.equal(belongsTo(main, 'product-a', '1.2.9'), false);

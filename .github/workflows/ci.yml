@@ -32,7 +32,8 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      # スクリプトは、このワークフローと同じ版（テスト用のマージコミット）のものを使う（PR の先頭が古いと、ワークフローと食い違うため）
+      # スクリプトと製品のパス設定（.github の直下のファイル）は、このワークフローと同じ版（テスト用のマージコミット）のものを使う
+      # （PR の先頭が古いと、ワークフローと食い違うため）。PR の先頭は、変更とマージ後の中身を調べるデータとしてだけ使う
       - uses: actions/checkout@v7
         with:
           path: .automation
@@ -52,7 +53,7 @@ jobs:
       - id: paths
         uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
         with:
-          filters: .github/product-paths.yml
+          filters: .automation/.github/product-paths.yml
           base: ${{ steps.base.outputs.base_sha }}
           token: ''
 

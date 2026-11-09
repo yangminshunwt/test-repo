@@ -76,7 +76,7 @@ function extractReleaseLabels(labels, products) {
 
 // baseBranch: PR のマージ先
 // labels: PR に付いているラベル
-// affectedProducts: 変更が影響する製品
+// affectedProducts: 変更が影響する製品（versionFile の製品のうち）
 // versionFile / baseVersionFile: マージ後とマージ前の VERSION ファイルの中身
 // branches: 今あるリリースブランチの名前
 // リリース済みのバージョンのラベルは、そのリリースブランチが消えている（Tag Creation がリリースタグを打って消す）ので、
@@ -92,12 +92,10 @@ function checkReleaseLabels({ baseBranch, labels, affectedProducts, versionFile,
   let release = null;
   let requiredProducts;
   if (baseBranch === 'main') {
-    requiredProducts = affectedProducts.filter((product) => products.includes(product));
+    requiredProducts = affectedProducts;
   } else {
+    // ワークフローは main と release/** への PR でだけ動き、release/** は自動化（と管理者）だけが release/<製品名>/vX.Y.Z の形で作る
     release = parseReleaseBranch(baseBranch);
-    if (!release || !products.includes(release.product)) {
-      return { errors: [`マージ先の ${baseBranch} は、main でも release/<製品名>/vX.Y.Z の形式のリリースブランチでもありません。`] };
-    }
     requiredProducts = [release.product];
     for (const { label, product } of releaseLabels) {
       if (product !== release.product) {

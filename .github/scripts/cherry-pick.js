@@ -90,7 +90,7 @@ async function reportFailures({ github, context, core }) {
   const repo = context.repo;
   const env = process.env;
   const reasons = [];
-  if (env.APP_TOKEN_OUTCOME !== 'success') {
+  if (env.APP_TOKEN_OUTCOME === 'failure') {
     reasons.push('GitHub App のトークンを作れませんでした。App とリポジトリの設定（CHERRY_PICK_APP_CLIENT_ID・CHERRY_PICK_APP_PRIVATE_KEY）を確かめてください。');
   } else if (env.JOB_STATUS === 'failure') {
     reasons.push('途中のステップが失敗しました。実行の記録を確かめてください。');

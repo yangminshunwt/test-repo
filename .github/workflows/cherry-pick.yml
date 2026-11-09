@@ -32,8 +32,9 @@ jobs:
     name: cherry-pick
     if: github.event_name == 'workflow_dispatch' || github.event.pull_request.merged
     runs-on: ubuntu-latest
+    # 行き先を決めるまでは GITHUB_TOKEN で動かし、App のトークンは行き先があるときだけ作る（行き先のない PR は App に頼らない）
     permissions:
-      contents: read
+      contents: write # 前の実行の残りの cherry-pick のブランチを消す
       pull-requests: write # 失敗を元の PR へコメントする（App のトークンを作れなかったときも知らせるため GITHUB_TOKEN で）
     steps:
       # スクリプトと、変更がもう入っているかを確かめるためのすべての履歴（リリースブランチも）。
@@ -43,8 +44,18 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      - id: select
+        name: Select targets
+        uses: actions/github-script@v9
+        with:
+          retries: 3 # GitHub API の一時的なエラー（5xx）はやり直す
+          script: |
+            const { selectTargets } = require('./.github/scripts/cherry-pick.js')
+            await selectTargets({ github, context, core })
+
       # GITHUB_TOKEN で作った PR ではチェックが走らないので、GitHub App のトークンを使う
       - id: app-token
+        if: steps.select.outputs.targets != ''
         uses: actions/create-github-app-token@v3
         with:
           client-id: ${{ vars.CHERRY_PICK_APP_CLIENT_ID }}
@@ -53,16 +64,6 @@ jobs:
           permission-issues: write
           permission-pull-requests: write
           permission-workflows: write # .github/workflows の変更も cherry-pick するため
-
-      - id: select
-        name: Select targets
-        uses: actions/github-script@v9
-        with:
-          retries: 3 # GitHub API の一時的なエラー（5xx）はやり直す
-          github-token: ${{ steps.app-token.outputs.token }}
-          script: |
-            const { selectTargets } = require('./.github/scripts/cherry-pick.js')
-            await selectTargets({ github, context, core })
 
       # backport-action は作業場所のブランチを切り替えるので、スクリプトとは別の場所に取る
       - if: steps.select.outputs.branches != ''
@@ -91,7 +92,7 @@ jobs:
           experimental: '{"conflict_resolution": "draft_commit_conflicts"}'
 
       - name: Label cherry-pick pull requests
-        if: ${{ !cancelled() && steps.select.outputs.targets != '' }}
+        if: ${{ !cancelled() && steps.app-token.outcome == 'success' }}
         uses: actions/github-script@v9
         env:
           TARGETS: ${{ steps.select.outputs.targets }}
