@@ -140,8 +140,7 @@ function checkReleaseLabels({ baseBranch, labels, affectedProducts, versionFile,
 
   // VERSION は上げるだけ。main で上げるときは、上げる前のバージョンのリリースブランチを先に作っておく（開発フェーズの入り方の順番）。
   // VERSION を上げる PR に製品のラベルを付けるなら、上げた後のバージョンにする（古いバージョンなら、上げた VERSION ごと cherry-pick される）。
-  for (const product of products.filter((p) => baseVersions[p] !== undefined && baseVersions[p] !== versions[p])) {
-    if (release && product !== release.product) continue;
+  for (const product of products.filter((p) => baseVersions[p] !== undefined && baseVersions[p] !== versions[p] && (!release || p === release.product))) {
     const [before, after] = [baseVersions[product], versions[product]];
     if (compareVersions(after, before) < 0) {
       errors.push(`VERSION の ${product} を ${before} から ${after} に下げています。`);
@@ -157,11 +156,11 @@ function checkReleaseLabels({ baseBranch, labels, affectedProducts, versionFile,
   // マージ先のバージョンは、main ならマージ後の VERSION、リリースブランチならブランチ名。
   for (const { label, product, version } of releaseLabels) {
     const upper = release ? release.version : versions[product];
+    const target = release ? `マージ先のブランチのバージョン（v${upper}）` : `マージ後の VERSION（${product}/${upper}）`;
     if (compareVersions(version, upper) > 0) {
-      const target = release ? `マージ先のブランチのバージョン（v${upper}）` : `マージ後の VERSION（${product}/${upper}）`;
       errors.push(`${label}：${target}より新しいバージョンです。`);
     } else if (version !== upper && !hasBranch(product, version)) {
-      errors.push(`${label}：${product} に v${version} のリリースブランチがありません（リリース済みか、まだ作っていません）。main の VERSION か、今あるリリースブランチのバージョンを付けてください。`);
+      errors.push(`${label}：${product} に v${version} のリリースブランチがありません（リリース済みか、まだ作っていません）。${target}か、それより古い今あるリリースブランチのバージョンを付けてください。`);
     }
   }
 
@@ -174,8 +173,8 @@ function checkReleaseLabels({ baseBranch, labels, affectedProducts, versionFile,
 // pull: { base, head, labels }（labels はラベルの名前）
 function belongsTo(pull, product, version) {
   if (parseCherryPickBranch(pull.head) !== null) return false;
-  const base = pull.base === 'main' ? null : parseReleaseBranch(pull.base);
-  if (pull.base !== 'main' && !(base && base.product === product && compareVersions(version, base.version) <= 0)) return false;
+  const base = parseReleaseBranch(pull.base);
+  if (pull.base !== 'main' && !(base?.product === product && compareVersions(version, base.version) <= 0)) return false;
   return extractReleaseLabels(pull.labels, [product]).some((label) => compareVersions(label.version, version) <= 0);
 }
 
@@ -234,7 +233,7 @@ function planRelease({ branch, tags }) {
     return { error: `${branch} はリリースブランチ（release/<製品名>/vX.Y.Z）ではありません。Use workflow from でリリースブランチを選んで実行してください。` };
   }
   const releaseTag = `${release.product}/v${release.version}`;
-  const rcNumbers = tags.filter((tag) => tag.startsWith(`${releaseTag}-rc.`)).map((tag) => Number(tag.slice(`${releaseTag}-rc.`.length))).filter((n) => n > 0);
+  const rcNumbers = tags.filter((tag) => tag.startsWith(`${releaseTag}-rc.`)).map((tag) => Number(tag.slice(`${releaseTag}-rc.`.length)));
   const latestRc = rcNumbers.length > 0 ? Math.max(...rcNumbers) : null;
   return {
     product: release.product,

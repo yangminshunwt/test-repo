@@ -40,7 +40,7 @@ async function check({ core }) {
     affectedProducts: affected.products,
     versionFile,
     baseVersionFile: git('show', `${base}:VERSION`),
-    branches: localReleaseBranches().map(([name]) => name),
+    branches: localReleaseBranches(),
   });
 
   await core.summary

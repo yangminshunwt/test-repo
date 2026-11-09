@@ -3,7 +3,7 @@
 
 const { containsChange, listMergedPulls } = require('./changes.js');
 const { branchHead, deleteBranchIfAt, localReleaseBranches } = require('./github-helpers.js');
-const { cherryPickBranch, findCherryPickTargets, parseReleaseBranch } = require('./release-labels.js');
+const { cherryPickBranch, findCherryPickTargets } = require('./release-labels.js');
 
 // backport-action が cherry-pick のコミットに使う committer（action.yml の git_committer_email の既定）
 const AUTOMATION_COMMITTER = 'github-actions[bot]@users.noreply.github.com';
@@ -32,7 +32,7 @@ async function selectTargets({ github, context, core }) {
   const repo = context.repo;
   const { data: pr } = await github.rest.pulls.get({ ...repo, pull_number: prNumber() });
   if (!pr.merged) return core.setFailed(`#${pr.number} はマージされていません。`);
-  const targets = findCherryPickTargets({ base: pr.base.ref, head: pr.head.ref, labels: pr.labels.map((label) => label.name) }, localReleaseBranches().map(([name]) => name));
+  const targets = findCherryPickTargets({ base: pr.base.ref, head: pr.head.ref, labels: pr.labels.map((label) => label.name) }, localReleaseBranches());
   core.setOutput('targets', targets.join(' '));
 
   const pulls = targets.length > 0 ? await listMergedPulls(github, repo) : [];
@@ -78,9 +78,8 @@ async function waitForMergeLink(github, repo, core, pr) {
 async function labelPullRequests({ github, context }) {
   const repo = context.repo;
   for (const target of process.env.TARGETS.split(' ').filter(Boolean)) {
-    const release = parseReleaseBranch(target);
     for (const pull of await cherryPickPulls(github, repo, target, 'open')) {
-      await github.rest.issues.addLabels({ ...repo, issue_number: pull.number, labels: [`${release.product}/v${release.version}`] });
+      await github.rest.issues.addLabels({ ...repo, issue_number: pull.number, labels: [target.slice('release/'.length)] });
     }
   }
 }
@@ -101,8 +100,9 @@ async function reportFailures({ github, context, core }) {
   for (const line of (env.RESULTS || '').split('\n')) {
     if (line.endsWith('=false')) reasons.push(`${line.slice(0, -'=false'.length)} に cherry-pick できませんでした。`);
   }
-  // 結果を出さずに終わることもある（PR のコミットにマージコミットがあると判断したときなど。理由は backport-action のコメントにだけ書かれる）
-  if (env.BRANCHES && env.BACKPORT_OUTCOME === 'success' && !env.RESULTS) {
+  // 行き先を 1 つも処理せずに終わることもある（PR のコミットにマージコミットがあると判断したときなど。理由は backport-action のコメントにだけ
+  // 書かれる）。そのときだけ was_successful も出さない（すべての行き先を飛ばしたとき＝もう入っていたときは、was_successful は出す）
+  if (env.BACKPORT_OUTCOME === 'success' && !env.WAS_SUCCESSFUL) {
     reasons.push('backport-action が結果を出さずに終わりました。元の PR の backport-action のコメントと、実行の記録を確かめてください。');
   }
   if (reasons.length === 0) return;

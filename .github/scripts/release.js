@@ -1,6 +1,7 @@
 // release.yml から actions/github-script で呼ぶ処理（開発ルールの「リリース手順」）。
 // 作業場所に、実行したリリースブランチをすべての履歴（ほかのブランチとタグも）つきで取ってある。
-// 判断はすべて、このチェックアウトした時点のものから行う（ブランチの削除も、チェックアウトした先頭のときだけ）。
+// コミット・ブランチ・タグ・VERSION はこのチェックアウトから読み、PR の一覧とラベルは API から読む。ブランチは、チェックアウトした
+// 先頭のときだけ削除する（そのあとに入った PR があれば削除できず、やり直しで読み直す）。
 'use strict';
 
 const { listMergedPulls, missingChanges } = require('./changes.js');
@@ -20,7 +21,7 @@ function versionAt(ref, product) {
 
 function loadPlan(context) {
   const branch = context.ref.replace(/^refs\/heads\//, '');
-  const tags = git('tag', '--list', `${branch.split('/')[1] ?? ''}/v*`).split('\n').filter(Boolean);
+  const tags = git('tag', '--list').split('\n').filter(Boolean);
   return { branch, plan: planRelease({ branch, tags }) };
 }
 
@@ -29,8 +30,9 @@ async function createTag(github, repo, name, sha, message) {
   await github.rest.git.createRef({ ...repo, ref: `refs/tags/${name}`, sha: tag.sha });
 }
 
-// main の VERSION を上げてからリリースする（開発フェーズの入り方の順番）。上げる前にリリースブランチを消すと、
-// VERSION を上げる PR が「上げる前のバージョンのリリースブランチがない」で通らなくなり、main の VERSION のラベルも付けられなくなるため。
+// rc もリリースも、main の VERSION を上げてから行う（開発フェーズの入り方の順番）。上げる前にリリースしてブランチを消すと、
+// VERSION を上げる PR が「上げる前のバージョンのリリースブランチがない」で通らなくなって main がこのバージョンのままになり、
+// main の PR にはリリース済みのこのバージョンのラベルしか付けられず（次のバージョンは VERSION より新しい）、変更がどこにも入らなくなる。
 function mainNotBumped(plan) {
   const main = versionAt('origin/main', plan.product);
   if (main && compareVersions(main, plan.version) > 0) return null;
@@ -130,8 +132,9 @@ async function release({ github, context, core }) {
   if (open.length > 0) problems.push(`${branch} に向けた開いている PR（${prList(open)}）は、このリリースに入っておらず、ブランチの削除で閉じられます。`);
   if (missing.length > 0) {
     problems.push(
-      `ラベルではこのリリースに入るはずなのに、入っていない変更があります（${prList(missing)}）。修正フェーズに入れるときは、Hotfix Preparation でブランチを作ると、` +
-        `main やより新しいリリースブランチにマージした変更は自動で cherry-pick されます。${branch} に直接マージした変更は自動では入らないので、そのとき作った修正フェーズのブランチに PR を出し直してください。`,
+      `ラベルではこのリリースに入るはずなのに、入っていない変更があります（${prList(missing)}）。修正フェーズに入れるときは、Hotfix Preparation が製品の最新のリリースタグから` +
+        `修正フェーズのブランチを作り、main やより新しいリリースブランチにマージした変更を自動で cherry-pick します（このリリースより新しいリリースがあれば、このバージョンの修正フェーズは作れません）。` +
+        `${branch} に直接マージした変更は自動では入らないので、修正フェーズのブランチに PR を出し直してください。`,
     );
   }
   await report(core, `${plan.releaseTag} のリリース`, [...lines, ...problems, await archiveLabel(github, repo, plan.releaseTag)]);

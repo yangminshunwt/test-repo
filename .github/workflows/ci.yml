@@ -15,6 +15,8 @@ permissions:
 jobs:
   changes:
     name: find affected products
+    # マージした PR は、もうマージも再オープンもできないのでテストしない（ほかのジョブも飛ばされ、ci は成功の扱いになる）
+    if: ${{ !github.event.pull_request.merged }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -30,12 +32,19 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      # スクリプトは、このワークフローと同じ版（テスト用のマージコミット）のものを使う（PR の先頭が古いと、ワークフローと食い違うため）
+      - uses: actions/checkout@v7
+        with:
+          path: .automation
+          sparse-checkout: .github/scripts
+          persist-credentials: false
+
       - id: base
         uses: actions/github-script@v9
         with:
           retries: 3 # GitHub API の一時的なエラー（5xx）はやり直す
           script: |
-            const { findBase } = require('./.github/scripts/release-label-check.js')
+            const { findBase } = require('./.automation/.github/scripts/release-label-check.js')
             await findBase({ github, context, core })
 
       # 影響する製品は、ラベルのチェックと同じ設定（.github/product-paths.yml）で決める。

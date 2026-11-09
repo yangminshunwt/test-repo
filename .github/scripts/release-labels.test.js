@@ -343,7 +343,7 @@ test('リリース手順：rc タグは 1 から順に、リリースタグは�
     latestRcTag: null,
     nextRcTag: 'product-a/v1.4.0-rc.1',
   });
-  const tags = ['product-a/v1.4.0-rc.1', 'product-a/v1.4.0-rc.10', 'product-a/v1.4.0-rc.2', 'product-a/v1.4.0-rc.x', 'product-a/v1.4.1-rc.3', 'product-b/v1.4.0-rc.20'];
+  const tags = ['product-a/v1.4.0-rc.1', 'product-a/v1.4.0-rc.10', 'product-a/v1.4.0-rc.2', 'product-a/v1.4.1-rc.3', 'product-b/v1.4.0-rc.20'];
   const plan = planRelease({ branch, tags });
   assert.equal(plan.latestRcTag, 'product-a/v1.4.0-rc.10');
   assert.equal(plan.nextRcTag, 'product-a/v1.4.0-rc.11');

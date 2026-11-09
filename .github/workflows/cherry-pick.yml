@@ -108,8 +108,8 @@ jobs:
         env:
           APP_TOKEN_OUTCOME: ${{ steps.app-token.outcome }}
           JOB_STATUS: ${{ job.status }}
-          BRANCHES: ${{ steps.select.outputs.branches }}
           BACKPORT_OUTCOME: ${{ steps.backport.outcome }}
+          WAS_SUCCESSFUL: ${{ steps.backport.outputs.was_successful }}
           RESULTS: ${{ steps.backport.outputs.was_successful_by_target }}
         with:
           retries: 3 # GitHub API の一時的なエラー（5xx）はやり直す

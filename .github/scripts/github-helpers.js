@@ -24,20 +24,14 @@ async function found(request) {
 // ブランチの今の先頭のコミット（なければ null）
 const branchHead = async (github, repo, branch) => (await found(github.rest.git.getRef({ ...repo, ref: `heads/${branch}` })))?.object.sha ?? null;
 
-// チェックアウトしたときのリリースブランチ（release/...）の名前と先頭を返す。
+// チェックアウトしたときのリリースブランチ（release/...）の名前を返す。
 // 同じ実行の中のほかの判断（変更が入っているかなど）と同じ時点のものを使うため、API ではなくチェックアウトから読む。
-function localReleaseBranches() {
-  return git('for-each-ref', '--format=%(refname:lstrip=3) %(objectname)', 'refs/remotes/origin/release/')
-    .split('\n')
-    .filter(Boolean)
-    .map((line) => line.split(' '));
-}
+const localReleaseBranches = () => git('for-each-ref', '--format=%(refname:lstrip=3)', 'refs/remotes/origin/release/').split('\n').filter(Boolean);
 
 // リリースブランチ branch を sha から作る（やり直したときも続きから進められるよう、チェックアウトしたときにあればそのまま使う）。
 // 結果の文と、ブランチの先頭（チェックアウトしたときのもの）を返す。
 async function createReleaseBranch(github, repo, branch, sha) {
-  const existing = new Map(localReleaseBranches()).get(branch);
-  if (existing) return { line: `${branch} はすでにあるので、そのまま使います。`, head: existing };
+  if (localReleaseBranches().includes(branch)) return { line: `${branch} はすでにあるので、そのまま使います。`, head: git('rev-parse', `refs/remotes/origin/${branch}`) };
   await github.rest.git.createRef({ ...repo, ref: `refs/heads/${branch}`, sha });
   return { line: `${branch} を作りました（${sha.slice(0, 7)} から）。`, head: sha };
 }
