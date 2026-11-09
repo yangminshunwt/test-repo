@@ -2,8 +2,8 @@ name: Tag Creation
 
 # リリース手順を進める（開発ルールの「リリース手順」）。Use workflow from でリリースブランチを選んで実行する。
 # - rc：リリース申請の前に、リリースブランチの先頭に次の rc タグ（<製品名>/vX.Y.Z-rc.N）を打つ
-# - release：リリースの後に、リリースタグ（<製品名>/vX.Y.Z）を打ち、リリースブランチを削除する。
-#   rc を打っていれば最後の rc と同じコミットに、打っていなければ rc と同じ確認をしてからリリースブランチの先頭に打つ
+# - release：リリースの後に、リリースしたコミット（commit に入力したもの、なければ最後の rc）にリリースタグ（<製品名>/vX.Y.Z）を打ち、
+#   リリースブランチを削除する
 on:
   workflow_dispatch:
     inputs:
@@ -12,6 +12,10 @@ on:
         required: true
         type: choice
         options: [rc, release]
+      commit:
+        description: 'Released commit SHA (release step only; leave empty to use the latest rc tag)'
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -25,17 +29,11 @@ jobs:
     name: release
     runs-on: ubuntu-latest
     steps:
-      # スクリプトと main の VERSION は、いつも main のものを使う（リリースブランチにあるものは古いことがあるため）
+      # リリースブランチの今の先頭を、すべての履歴（main とほかのリリースブランチ、タグも）つきで取る。
+      # スクリプトも、このブランチのものを使う（ワークフローと同じブランチのものなので、食い違わない）
       - uses: actions/checkout@v7
         with:
-          ref: main
-          persist-credentials: false
-
-      # リリースブランチは、ジョブを始めた時点の先頭を、取りこぼしを確かめるためにすべての履歴つきで取る
-      - uses: actions/checkout@v7
-        with:
-          ref: ${{ github.ref_name }}
-          path: release-work
+          ref: ${{ github.ref }}
           fetch-depth: 0
           persist-credentials: false
 
@@ -47,12 +45,12 @@ jobs:
           private-key: ${{ secrets.CHERRY_PICK_APP_PRIVATE_KEY }}
           permission-contents: write
           permission-issues: write # リリースしたバージョンのリリースラベルをアーカイブする
-          permission-pull-requests: read
+          permission-pull-requests: read # マージされた PR の一覧を読む
 
       - uses: actions/github-script@v9
         env:
           STEP: ${{ inputs.step }}
-          RELEASE_WORK: release-work
+          COMMIT: ${{ inputs.commit }}
         with:
           retries: 3 # GitHub API の一時的なエラー（5xx）はやり直す
           github-token: ${{ steps.app-token.outputs.token }}

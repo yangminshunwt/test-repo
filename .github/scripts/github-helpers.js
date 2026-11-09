@@ -1,69 +1,66 @@
 // 各スクリプトから使う、GitHub の API を使う小さな処理。
 'use strict';
 
+const { execFileSync } = require('child_process');
+
+// 作業場所（すべての履歴を取ったチェックアウト）で git を動かす
+const git = (...args) => execFileSync('git', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+
 // PR の一覧を「#1、#2」の形にする
 function prList(pulls) {
   return pulls.map((pull) => `#${pull.number}`).join('、');
 }
 
-// ref（ブランチやコミット）のファイルの中身を返す。ファイルがなければ null。
-async function readFile(github, repo, path, ref) {
+// API の結果の data を返す。ない（404）なら null（ほかのエラーはそのまま投げる）
+async function found(request) {
   try {
-    const { data } = await github.rest.repos.getContent({ ...repo, path, ref });
-    return Buffer.from(data.content, 'base64').toString('utf8');
+    return (await request).data;
   } catch (error) {
     if (error.status === 404) return null;
     throw error;
   }
 }
 
-// ブランチがあるかを返す（ない＝404 なら false。ほかのエラーはそのまま投げる）
-async function branchExists(github, repo, branch) {
+// ブランチの今の先頭のコミット（なければ null）
+const branchHead = async (github, repo, branch) => (await found(github.rest.git.getRef({ ...repo, ref: `heads/${branch}` })))?.object.sha ?? null;
+
+// チェックアウトしたときのリリースブランチ（release/...）の名前を返す。
+// 同じ実行の中のほかの判断（変更が入っているかなど）と同じ時点のものを使うため、API ではなくチェックアウトから読む。
+const localReleaseBranches = () => git('for-each-ref', '--format=%(refname:lstrip=3)', 'refs/remotes/origin/release/').split('\n').filter(Boolean);
+
+// リリースブランチ branch を sha から作る（やり直したときも続きから進められるよう、チェックアウトしたときにあればそのまま使う）。
+// 結果の文と、ブランチの先頭（チェックアウトしたときのもの）を返す。
+async function createReleaseBranch(github, repo, branch, sha) {
+  if (localReleaseBranches().includes(branch)) return { line: `${branch} はすでにあるので、そのまま使います。`, head: git('rev-parse', `refs/remotes/origin/${branch}`) };
+  await github.rest.git.createRef({ ...repo, ref: `refs/heads/${branch}`, sha });
+  return { line: `${branch} を作りました（${sha.slice(0, 7)} から）。`, head: sha };
+}
+
+// リリースラベルを作る（すでにあればそのまま使う）。結果の文を返す。
+async function createReleaseLabel(github, repo, label) {
+  if (await found(github.rest.issues.getLabel({ ...repo, name: label }))) return `ラベル ${label} はすでにあります。`;
+  await github.rest.issues.createLabel({ ...repo, name: label, color: '1d76db', description: 'Release label' });
+  return `ラベル ${label} を作りました。`;
+}
+
+// ブランチを、先頭が sha のときだけ消す（確かめたあとにブランチが進んでいれば消さない）。消せた（もうない）なら true。
+async function deleteBranchIfAt(github, repo, branch, sha) {
+  const { data } = await github.rest.repos.get(repo);
   try {
-    await github.rest.git.getRef({ ...repo, ref: `heads/${branch}` });
+    await github.graphql(
+      `mutation($id: ID!, $name: GitRefname!, $before: GitObjectID!) {
+        updateRefs(input: { repositoryId: $id, refUpdates: [{ name: $name, beforeOid: $before, afterOid: "0000000000000000000000000000000000000000" }] }) { clientMutationId }
+      }`,
+      { id: data.node_id, name: `refs/heads/${branch}`, before: sha },
+    );
     return true;
   } catch (error) {
-    if (error.status === 404) return false;
+    // 消したあとの応答が届かずにやり直したときは、もうないので消せている。先頭が進んでいれば false、ほかの理由ならそのまま投げる
+    const head = await branchHead(github, repo, branch);
+    if (head === null) return true;
+    if (head !== sha) return false;
     throw error;
   }
-}
-
-// ラベルがあるかを返す（ない＝404 なら false。ほかのエラーはそのまま投げる）
-async function labelExists(github, repo, name) {
-  try {
-    await github.rest.issues.getLabel({ ...repo, name });
-    return true;
-  } catch (error) {
-    if (error.status === 404) return false;
-    throw error;
-  }
-}
-
-// 今あるリリースブランチ（release/...）の名前を返す
-async function listReleaseBranches(github, repo) {
-  const refs = await github.paginate(github.rest.git.listMatchingRefs, { ...repo, ref: 'heads/release/', per_page: 100 });
-  return refs.map((ref) => ref.ref.replace(/^refs\/heads\//, ''));
-}
-
-// base にマージされた PR のうち、shas のどれかのコミットを含むものを返す（同じ PR は 1 つにまとめる）
-async function mergedPullsOf(github, repo, shas, base) {
-  const pulls = new Map();
-  for (const sha of shas) {
-    const { data } = await github.rest.repos.listPullRequestsAssociatedWithCommit({ ...repo, commit_sha: sha });
-    for (const pull of data) {
-      if (pull.merged_at && pull.base.ref === base) pulls.set(pull.number, pull);
-    }
-  }
-  return [...pulls.values()];
-}
-
-// タグ（refs/tags/... の ref）が指すコミットを返す（注釈付きタグが入れ子になっていても、コミットまでたどる）
-async function tagCommit(github, repo, ref) {
-  let { type, sha } = ref.object;
-  while (type === 'tag') {
-    ({ type, sha } = (await github.rest.git.getTag({ ...repo, tag_sha: sha })).data.object);
-  }
-  return sha;
 }
 
 // 結果をログとジョブのまとめ（summary）に書く
@@ -72,4 +69,4 @@ async function report(core, heading, lines) {
   await core.summary.addHeading(heading, 3).addList(lines).write();
 }
 
-module.exports = { branchExists, labelExists, listReleaseBranches, mergedPullsOf, prList, readFile, report, tagCommit };
+module.exports = { branchHead, createReleaseBranch, createReleaseLabel, deleteBranchIfAt, git, localReleaseBranches, prList, report };

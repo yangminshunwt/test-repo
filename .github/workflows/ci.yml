@@ -8,56 +8,60 @@ on:
 permissions:
   contents: read
 
-# 影響する製品のテストだけを動かす。飛ばすときは、ワークフローの paths ではなくジョブの if で飛ばす
-# （if で飛ばしたジョブは必須チェックでも成功の扱いになるが、ワークフローごと動かないとチェックが待ちのまま残る）。
-# テストは、今のマージ先の先頭と PR の先頭とのマージコミットで動かす（判定のジョブが待って決める）。
-# 判定のジョブが成功しなかったとき（失敗・取り消し）は、テストのジョブを失敗にする（Re-run で決め直す）。
+# 影響する製品のテストだけを動かす。テストは PR の先頭で動かす（ルールセットで「マージ先の最新を取り込んでから」スカッシュで
+# マージするので、マージできるときは PR の先頭の中身がマージ後の中身と同じになる）。
+# 必須チェックは、最後の ci だけ。飛ばしたテストのジョブは成功の扱いで、判定やテストが失敗・取り消しなら ci が失敗する
+# （製品を足しても、ルールセットの必須チェックは変えなくてよい）。
 jobs:
   changes:
     name: find affected products
+    # マージした PR は、もうマージも再オープンもできないのでテストしない（ほかのジョブも飛ばされ、ci は成功の扱いになる）
+    if: ${{ !github.event.pull_request.merged }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      pull-requests: read # paths-filter が PR の変更ファイルを API で取る
+      pull-requests: read # 今のマージ先を API で取り直す
     outputs:
-      sha: ${{ steps.merge.outputs.sha }}
       matched: ${{ steps.paths.outputs.changes }}
-      all_products: ${{ steps.affected.outputs.all_products }}
-      scripts: ${{ steps.affected.outputs.scripts }}
+      all_products: ${{ steps.paths.outputs.all_count != steps.paths.outputs.listed_count || steps.scripts.outputs.ci == 'true' }}
+      scripts: ${{ steps.scripts.outputs.scripts }}
     steps:
-      # マージ先を変えた直後でも今のマージ先でテストするよう、今のマージ先とのマージコミットができるまで待つ
-      # （.github/scripts/merge-commit.js。ラベルのチェックと同じ）。待つスクリプトを読むためだけに、先に別の場所に取る
       - uses: actions/checkout@v7
         with:
-          path: .wait-scripts
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      # スクリプトと製品のパス設定（.github の直下のファイル）は、このワークフローと同じ版（テスト用のマージコミット）のものを使う
+      # （PR の先頭が古いと、ワークフローと食い違うため）。PR の先頭は、変更とマージ後の中身を調べるデータとしてだけ使う
+      - uses: actions/checkout@v7
+        with:
+          path: .automation
           sparse-checkout: .github/scripts
           persist-credentials: false
 
-      - name: Wait for the merge commit with the current base
-        id: merge
+      - id: base
         uses: actions/github-script@v9
         with:
           retries: 3 # GitHub API の一時的なエラー（5xx）はやり直す
           script: |
-            const { waitForMergeCommit } = require('./.wait-scripts/.github/scripts/merge-commit.js')
-            await waitForMergeCommit({ github, context, core })
-
-      - uses: actions/checkout@v7
-        with:
-          ref: ${{ steps.merge.outputs.sha }}
-          persist-credentials: false
+            const { findBase } = require('./.automation/.github/scripts/release-label-check.js')
+            await findBase({ github, context, core })
 
       # 影響する製品は、ラベルのチェックと同じ設定（.github/product-paths.yml）で決める。
-      # テストのジョブは、製品のフィルタに当たったか、すべての製品に影響するとき（書かれていないパスや、上限で一覧が切れているかもしれないとき）に動かす。
-      # 製品の一覧は PR の VERSION からは作らない（VERSION から製品の行が消えても、その製品のテストを飛ばさないため）
+      # 製品の設定に書かれていないパスの変更（all と listed の件数が違う）があれば、すべての製品のテストを動かす。
       - id: paths
         uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
         with:
-          filters: .github/product-paths.yml
+          filters: .automation/.github/product-paths.yml
+          base: ${{ steps.base.outputs.base_sha }}
+          token: ''
 
       - id: scripts
         uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
         with:
+          base: ${{ steps.base.outputs.base_sha }}
+          token: ''
           filters: |
             scripts:
               - '.github/**'
@@ -66,40 +70,15 @@ jobs:
             ci:
               - '.github/workflows/ci.yml'
 
-      - id: affected
-        uses: actions/github-script@v9
-        env:
-          MATCHED: ${{ steps.paths.outputs.changes }}
-          ALL_FILE_COUNT: ${{ steps.paths.outputs.all_count }}
-          LISTED_FILE_COUNT: ${{ steps.paths.outputs.listed_count }}
-          SCRIPTS: ${{ steps.scripts.outputs.scripts }}
-          CI_CHANGED: ${{ steps.scripts.outputs.ci }}
-        with:
-          script: |
-            const { MAX_LISTED_FILES, reasonForAllProducts } = require('./.github/scripts/release-labels.js')
-            const allFileCount = Number.parseInt(process.env.ALL_FILE_COUNT, 10)
-            const reason = reasonForAllProducts({ allFileCount, listedFileCount: Number.parseInt(process.env.LISTED_FILE_COUNT, 10) })
-            core.info(`当たったフィルタ：${process.env.MATCHED}${reason ? `（${reason}）` : ''}`)
-            if (process.env.CI_CHANGED === 'true') core.info('CI の設定が変わったので、すべての製品のテストを動かします。')
-            core.setOutput('all_products', String(reason !== null || process.env.CI_CHANGED === 'true'))
-            // 一覧が上限で切れているかもしれないときは、スクリプトの変更も見落としているかもしれないので動かす
-            core.setOutput('scripts', String(process.env.SCRIPTS === 'true' || allFileCount >= MAX_LISTED_FILES))
-
   unit-test-product-a:
     name: unit test for product-a
     needs: changes
-    if: ${{ always() && (needs.changes.result != 'success' || needs.changes.outputs.all_products == 'true' || contains(needs.changes.outputs.matched, '"product-a"')) }}
+    if: needs.changes.outputs.all_products == 'true' || contains(needs.changes.outputs.matched, '"product-a"')
     runs-on: ubuntu-latest
     steps:
-      - name: Stop when the tests to run could not be decided
-        # 取り消された実行でも動くよう always() を付ける（付けないと、このステップが飛ばされてテストが成功の扱いになる）
-        if: ${{ always() && needs.changes.result != 'success' }}
-        run: |
-          echo "::error::どのテストを動かすかを決められませんでした（find affected products が ${{ needs.changes.result }}）。Re-run してください。"
-          exit 1
       - uses: actions/checkout@v7
         with:
-          ref: ${{ needs.changes.outputs.sha }}
+          ref: ${{ github.event.pull_request.head.sha }}
           persist-credentials: false
       - name: Run tests
         run: test ! -e ProductA/FAIL
@@ -107,18 +86,12 @@ jobs:
   unit-test-product-b:
     name: unit test for product-b
     needs: changes
-    if: ${{ always() && (needs.changes.result != 'success' || needs.changes.outputs.all_products == 'true' || contains(needs.changes.outputs.matched, '"product-b"')) }}
+    if: needs.changes.outputs.all_products == 'true' || contains(needs.changes.outputs.matched, '"product-b"')
     runs-on: ubuntu-latest
     steps:
-      - name: Stop when the tests to run could not be decided
-        # 取り消された実行でも動くよう always() を付ける（付けないと、このステップが飛ばされてテストが成功の扱いになる）
-        if: ${{ always() && needs.changes.result != 'success' }}
-        run: |
-          echo "::error::どのテストを動かすかを決められませんでした（find affected products が ${{ needs.changes.result }}）。Re-run してください。"
-          exit 1
       - uses: actions/checkout@v7
         with:
-          ref: ${{ needs.changes.outputs.sha }}
+          ref: ${{ github.event.pull_request.head.sha }}
           persist-credentials: false
       - name: Run tests
         run: test ! -e ProductB/FAIL
@@ -127,23 +100,22 @@ jobs:
   script-test:
     name: script test
     needs: changes
-    if: ${{ always() && (needs.changes.result != 'success' || needs.changes.outputs.scripts == 'true') }}
+    if: needs.changes.outputs.scripts == 'true'
     runs-on: ubuntu-latest
     steps:
-      - name: Stop when the tests to run could not be decided
-        # 取り消された実行でも動くよう always() を付ける（付けないと、このステップが飛ばされてテストが成功の扱いになる）
-        if: ${{ always() && needs.changes.result != 'success' }}
-        run: |
-          echo "::error::どのテストを動かすかを決められませんでした（find affected products が ${{ needs.changes.result }}）。Re-run してください。"
-          exit 1
       - uses: actions/checkout@v7
         with:
-          ref: ${{ needs.changes.outputs.sha }}
+          ref: ${{ github.event.pull_request.head.sha }}
           persist-credentials: false
       - name: Run tests
-        run: node --test .github/scripts/release-labels.test.js .github/scripts/products.test.js
-# regression c2
-# regression c2
-# regression c2
-# regression c2
-# regression c2
+        run: node --test .github/scripts/*.test.js
+
+  ci:
+    name: ci
+    needs: [changes, unit-test-product-a, unit-test-product-b, script-test]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fail when a needed job failed or was cancelled
+        if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
+        run: exit 1

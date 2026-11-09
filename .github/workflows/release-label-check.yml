@@ -10,7 +10,7 @@ on:
 
 # concurrency で前の実行を取り消すことはしない。PR の作成とラベルの追加のように続けて起きたイベントで、
 # あとに作られた実行のほうが取り消されると、その結果（取り消し）が必須チェックに使われてマージできなくなるため。
-# どの実行もその時点のラベルを取り直して判定するので、取り消さなくても最後に作られた実行の結果が正しくなる。
+# どの実行もその時点のマージ先とラベルを取り直して判定するので、取り消さなくても最後に作られた実行の結果が正しくなる。
 
 permissions:
   contents: read
@@ -18,51 +18,53 @@ permissions:
 jobs:
   release-label-check:
     name: release label check
+    # マージした PR は、もうマージも再オープンもできないので確かめない（閉じただけの PR は再オープンできるので確かめる。飛ばした結果は成功の扱いになるため）
+    if: ${{ !github.event.pull_request.merged }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      issues: read
       pull-requests: read
     steps:
-      # マージ先を変えた直後でも今のマージ先で判定するよう、今のマージ先とのマージコミットができるまで待つ
-      # （.github/scripts/merge-commit.js）。待つスクリプトを読むためだけに、先にスクリプトを別の場所に取る
+      # PR の先頭を、マージ先との分かれ目と今あるリリースブランチを読むために、すべての履歴（ほかのブランチも）つきで取る
       - uses: actions/checkout@v7
         with:
-          path: .wait-scripts
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      # スクリプトと製品のパス設定（.github の直下のファイル）は、このワークフローと同じ版（テスト用のマージコミット）のものを使う
+      # （PR の先頭が古いと、ワークフローと食い違うため）。PR の先頭は、変更とマージ後の中身を調べるデータとしてだけ使う
+      - uses: actions/checkout@v7
+        with:
+          path: .automation
           sparse-checkout: .github/scripts
           persist-credentials: false
 
-      - name: Wait for the merge commit with the current base
-        id: merge
+      - id: base
         uses: actions/github-script@v9
         with:
           retries: 3 # GitHub API の一時的なエラー（5xx）はやり直す
           script: |
-            const { waitForMergeCommit } = require('./.wait-scripts/.github/scripts/merge-commit.js')
-            await waitForMergeCommit({ github, context, core })
+            const { findBase } = require('./.automation/.github/scripts/release-label-check.js')
+            await findBase({ github, context, core })
 
-      - uses: actions/checkout@v7
-        with:
-          ref: ${{ steps.merge.outputs.sha }}
-          # マージ前の VERSION を読むため、マージコミットの親まで取る
-          fetch-depth: 2
-          persist-credentials: false
-
-      - name: Find affected products
-        id: products
+      # 分かれ目から PR の先頭までの変更を git で探す（token を空にすると API ではなく git を使い、変更ファイルの件数の上限もない）
+      - id: products
         uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
         with:
-          filters: .github/product-paths.yml
+          filters: .automation/.github/product-paths.yml
+          base: ${{ steps.base.outputs.base_sha }}
+          token: ''
 
       - name: Check release labels
         uses: actions/github-script@v9
         env:
-          BASE_REF: ${{ steps.merge.outputs.base_ref }}
+          BASE_REF: ${{ steps.base.outputs.base_ref }}
+          LABELS: ${{ steps.base.outputs.labels }}
           AFFECTED_PRODUCTS: ${{ steps.products.outputs.changes }}
           ALL_FILE_COUNT: ${{ steps.products.outputs.all_count }}
           LISTED_FILE_COUNT: ${{ steps.products.outputs.listed_count }}
         with:
-          retries: 3 # GitHub API の一時的なエラー（5xx）はやり直す
           script: |
-            const run = require('./.github/scripts/release-label-check.js')
-            await run({ github, context, core })
+            const { check } = require('./.automation/.github/scripts/release-label-check.js')
+            await check({ core })

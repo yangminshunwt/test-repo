@@ -29,9 +29,7 @@
         "do_not_enforce_on_create": true,
         "required_status_checks": [
           { "context": "release label check", "integration_id": 15368 },
-          { "context": "unit test for product-a", "integration_id": 15368 },
-          { "context": "unit test for product-b", "integration_id": 15368 },
-          { "context": "script test", "integration_id": 15368 }
+          { "context": "ci", "integration_id": 15368 }
         ]
       }
     }

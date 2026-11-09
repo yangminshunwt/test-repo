@@ -16,19 +16,20 @@ on:
 permissions:
   contents: read
 
-# 同じ製品の実行は順番に処理する（ほかの製品は並行して動いてよい）
-concurrency:
-  group: hotfix-prep-${{ inputs.product }}
-  cancel-in-progress: false
-
 jobs:
   hotfix-prep:
     name: hotfix prep
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: write # 前のリリースに入らなかった PR の Cherry-Pick を実行する
+      pull-requests: read # マージされた PR の一覧を読む
     steps:
+      # リリースタグとその中身を読むので、すべての履歴（タグも）つきで取る
       - uses: actions/checkout@v7
         with:
           ref: main
+          fetch-depth: 0
           persist-credentials: false
 
       # GITHUB_TOKEN で作った PR ではチェックが走らないので、GitHub App のトークンを使う
@@ -63,7 +64,7 @@ jobs:
         env:
           RELEASE_WORK: release-work
           PRODUCT: ${{ inputs.product }}
-          NEXT_VERSION: ${{ steps.prepare.outputs.next_version }}
+          VERSION: ${{ steps.prepare.outputs.next_version }}
         with:
           script: |
             const { bumpVersion } = require('./.github/scripts/hotfix-prep.js')
@@ -88,6 +89,19 @@ jobs:
             この PR がマージされるまで、このリリースブランチへの PR はラベルのチェックで止まるので、早めにマージしてください。
 
             この PR に手でコミットを足した場合、Hotfix Preparation をもう一度実行すると、そのコミットは消えます。
+
+      - name: Catch up cherry-picks
+        uses: actions/github-script@v9
+        env:
+          PRODUCT: ${{ inputs.product }}
+          VERSION: ${{ steps.prepare.outputs.next_version }}
+          RELEASE_BRANCH: ${{ steps.prepare.outputs.release_branch }}
+          BRANCH_SHA: ${{ steps.prepare.outputs.branch_sha }}
+        with:
+          retries: 3 # GitHub API の一時的なエラー（5xx）はやり直す
+          script: |
+            const { catchUp } = require('./.github/scripts/changes.js')
+            await catchUp({ github, context, core })
 
       - name: Summary
         env:
