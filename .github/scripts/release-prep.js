@@ -1,60 +1,45 @@
 // release-prep.yml から actions/github-script で呼ぶ処理。
+// 作業場所には、今の main をすべての履歴（ブランチとタグも）つきで取ってある。
 'use strict';
 
 const { execFileSync } = require('child_process');
 const fs = require('fs');
-const { mergedPullsOf, prList, report } = require('./github-helpers.js');
-const { createReleaseBranch, createReleaseLabel } = require('./release-branch.js');
-const { planReleasePrep, setVersion } = require('./release-labels.js');
+const { dispatchCherryPicks } = require('./changes.js');
+const { createReleaseBranch, createReleaseLabel, prList, report } = require('./github-helpers.js');
+const { parseVersionFile, planReleasePrep, setVersion } = require('./release-labels.js');
 
-// リリースブランチと次のバージョンのリリースラベルを作り、作業場所の VERSION を次のバージョンに書き換える。
-// やり直したときも続きから進められるよう、すでにあるブランチやラベルはそのまま使う。
+const git = (...args) => execFileSync('git', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+
+// 準備するバージョンは、実行を始めた時点（Run workflow を押した時点。Re-run でも同じ）の main の VERSION で決め、
+// リリースブランチもその時点の main から作る。VERSION を上げる PR は今の main に作る（ほかの製品の VERSION を戻さないため）。
+// どのステップも、すでにできているものはそのまま使うので、Re-run すると続きから進む（すべて済んでいれば何もしない）。
 async function prepare({ github, context, core }) {
   const repo = context.repo;
   if (context.ref !== 'refs/heads/main') return core.setFailed(`main ブランチで実行してください（今は ${context.ref}）。`);
   const product = process.env.PRODUCT;
-  // チェックアウトしたのは、ジョブを始めた時点の最新の main（Re-run でも、そのときの main になる）
-  const sha = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+  const plan = planReleasePrep({ versionFile: git('show', `${context.sha}:VERSION`), product, bump: process.env.BUMP });
+  if (git('tag', '--list', plan.releaseTag) !== '') return core.setFailed(`${plan.releaseTag} はもうリリースされています（この準備は済んでいます）。`);
   const versionFile = fs.readFileSync('VERSION', 'utf8');
-  const plan = planReleasePrep({ versionFile, product, bump: process.env.BUMP });
-  if (plan.error) return core.setFailed(plan.error);
-
-  // 同じ製品を別のバージョンに上げる PR が開いていると、どちらもマージできてしまうので止める
-  const prefix = `release-prep/${product}/`;
-  const others = (await github.paginate(github.rest.pulls.list, { ...repo, state: 'open', base: 'main', per_page: 100 })).filter(
-    (pull) => pull.head.ref.startsWith(prefix) && pull.head.ref !== `${prefix}v${plan.nextVersion}`,
-  );
-  if (others.length > 0) {
-    return core.setFailed(`${product} の VERSION を上げる PR がほかにも開いています（${prList(others)}）。閉じてから実行し直してください。`);
+  const now = parseVersionFile(versionFile)[product];
+  if (now !== plan.currentVersion && now !== plan.nextVersion) {
+    return core.setFailed(`実行を始めたあとに main の VERSION の ${product} が ${now} に変わったので、この準備（${plan.currentVersion} → ${plan.nextVersion}）は進められません。`);
   }
 
-  const branch = await createReleaseBranch({ github, core, repo, branch: plan.releaseBranch, sha });
-  if (!branch) return;
-  const results = [branch.result, await createReleaseLabel({ github, repo, label: plan.nextLabel })];
+  const results = [await createReleaseBranch(github, repo, plan.releaseBranch, context.sha), await createReleaseLabel(github, repo, plan.nextLabel)];
   fs.writeFileSync('VERSION', setVersion(versionFile, product, plan.nextVersion));
-
   await report(core, `${product} のリリースの準備（${plan.currentVersion} → ${plan.nextVersion}）`, results);
   core.setOutput('current_version', plan.currentVersion);
   core.setOutput('next_version', plan.nextVersion);
   core.setOutput('release_branch', plan.releaseBranch);
-  core.setOutput('next_label', plan.nextLabel);
-  core.setOutput('created_from', branch.created ? sha : '');
+  // 前の実行で作ったブランチなら、cherry-pick がもう入っているかもしれないので、今の先頭で確かめる
+  core.setOutput('branch_sha', (await github.rest.git.getRef({ ...repo, ref: `heads/${plan.releaseBranch}` })).data.object.sha);
 }
 
-// リリースブランチを作ったコミット（CREATED_FROM）より後に main にマージされた PR の cherry-pick をやり直す。
-// チェックアウトしてからブランチを作るまでの間にマージされた PR は、cherry-pick の時点でブランチがなかったかもしれないため。
-// cherry-pick.yml は作成済みの行き先を飛ばすので、もう入っている PR をやり直しても重ならない。
-async function catchUpCherryPicks({ github, context, core }) {
-  const repo = context.repo;
-  const createdFrom = process.env.CREATED_FROM;
-  if (!createdFrom) return;
-  const { data: main } = await github.rest.repos.getBranch({ ...repo, branch: 'main' });
-  if (main.commit.sha === createdFrom) return;
-  const { data: compare } = await github.rest.repos.compareCommitsWithBasehead({ ...repo, basehead: `${createdFrom}...${main.commit.sha}` });
-  for (const pull of await mergedPullsOf(github, repo, compare.commits.map((commit) => commit.sha), 'main')) {
-    await github.rest.actions.createWorkflowDispatch({ ...repo, workflow_id: 'cherry-pick.yml', ref: 'main', inputs: { pr_number: String(pull.number) } });
-    core.info(`ブランチを作る間に main にマージされた #${pull.number} の cherry-pick をやり直しました。`);
-  }
+// リリースブランチを作る前に main にマージされて、Cherry-Pick がこのブランチに入れていない PR の cherry-pick をやり直す
+async function catchUp({ github, context, core }) {
+  const env = process.env;
+  const dispatched = await dispatchCherryPicks({ github, repo: context.repo, dir: '.', product: env.PRODUCT, version: env.VERSION, commit: env.BRANCH_SHA });
+  if (dispatched.length > 0) await report(core, 'cherry-pick のやり直し', [`${env.RELEASE_BRANCH} に入っていない ${prList(dispatched)} の Cherry-Pick を実行しました。`]);
 }
 
-module.exports = { prepare, catchUpCherryPicks };
+module.exports = { prepare, catchUp };

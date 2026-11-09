@@ -22,24 +22,20 @@ on:
 permissions:
   contents: read
 
-# 同じ製品の実行は順番に処理する（ほかの製品は並行して動いてよい）
-concurrency:
-  group: release-prep-${{ inputs.product }}
-  cancel-in-progress: false
-
 jobs:
   release-prep:
     name: release prep
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      actions: write # ブランチを作る間にマージされた PR の cherry-pick をやり直す
-      pull-requests: read
+      actions: write # リリースブランチに入っていない PR の Cherry-Pick を実行する
+      pull-requests: read # マージされた PR の一覧を読む
     steps:
-      # 実行を始めた時点ではなく、ジョブを始めた時点の最新の main から作る（Re-run でも今の main になる）
+      # VERSION を上げる PR は今の main に作る。リリースブランチは実行を始めた時点の main から作るので、すべての履歴（タグも）つきで取る
       - uses: actions/checkout@v7
         with:
           ref: main
+          fetch-depth: 0
           persist-credentials: false
 
       # GITHUB_TOKEN で作った PR ではチェックが走らないので、GitHub App のトークンを使う
@@ -64,16 +60,6 @@ jobs:
             const { prepare } = require('./.github/scripts/release-prep.js')
             await prepare({ github, context, core })
 
-      - name: Catch up cherry-picks
-        uses: actions/github-script@v9
-        env:
-          CREATED_FROM: ${{ steps.prepare.outputs.created_from }}
-        with:
-          retries: 3 # GitHub API の一時的なエラー（5xx）はやり直す
-          script: |
-            const { catchUpCherryPicks } = require('./.github/scripts/release-prep.js')
-            await catchUpCherryPicks({ github, context, core })
-
       - id: pull-request
         uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
         with:
@@ -84,7 +70,6 @@ jobs:
           add-paths: VERSION
           commit-message: Bump ${{ inputs.product }} to ${{ steps.prepare.outputs.next_version }}
           title: Bump ${{ inputs.product }} to ${{ steps.prepare.outputs.next_version }}
-          labels: ${{ steps.prepare.outputs.next_label }}
           assignees: ${{ github.actor }} # 実行した人を担当者にする
           body: |
             `main` の ${{ inputs.product }} の VERSION を ${{ steps.prepare.outputs.current_version }} から ${{ steps.prepare.outputs.next_version }} に上げる PR です（Release Preparation のワークフローが作りました）。
@@ -92,6 +77,19 @@ jobs:
             `${{ steps.prepare.outputs.release_branch }}` はもう作ってあります。この PR がマージされるまで、${{ inputs.product }} の次のバージョン向けの PR は `main` にマージできないので、早めにマージしてください。
 
             この PR がコンフリクトしたら（ほかの製品の VERSION を上げる PR が先にマージされたときなど）、Actions の「Release Preparation」を同じ製品でもう一度実行すると、最新の `main` の上に作り直されます。
+
+      - name: Catch up cherry-picks
+        uses: actions/github-script@v9
+        env:
+          PRODUCT: ${{ inputs.product }}
+          VERSION: ${{ steps.prepare.outputs.current_version }}
+          RELEASE_BRANCH: ${{ steps.prepare.outputs.release_branch }}
+          BRANCH_SHA: ${{ steps.prepare.outputs.branch_sha }}
+        with:
+          retries: 3 # GitHub API の一時的なエラー（5xx）はやり直す
+          script: |
+            const { catchUp } = require('./.github/scripts/release-prep.js')
+            await catchUp({ github, context, core })
 
       - name: Summary
         env:

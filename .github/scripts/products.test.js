@@ -35,6 +35,8 @@ test('製品のパス設定の製品のフィルタと listed が、VERSION の�
     filters.filter((filter) => !HELPER_FILTERS.includes(filter)),
     '.github/product-paths.yml の製品のフィルタ',
   );
+  // all（すべてのファイル）と listed の件数の違いで、どの製品にも書かれていないパスを見つけている（release-labels.js の findAffectedProducts）
+  assert.match(paths, /^all: \['\*\*'\]$/m, ".github/product-paths.yml に all: ['**'] がありません");
   const listed = /^listed:\s*\[([^\]]*)\]/m.exec(paths);
   assert.ok(listed, '.github/product-paths.yml に listed がありません');
   const aliases = flowList(listed[1]);

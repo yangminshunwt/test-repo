@@ -4,9 +4,7 @@
 
 const VERSION_PATTERN = /^(\d+)\.(\d+)\.(\d+)$/;
 const RELEASE_BRANCH_PATTERN = /^release\/([^/]+)\/v(\d+\.\d+\.\d+)$/;
-const RELEASE_LABEL_VERSION_PATTERN = /^v(\d+\.\d+\.\d+)$/;
-// GitHub の API が返す PR の変更ファイルの上限（これ以上は返さない）
-const MAX_LISTED_FILES = 3000;
+const RELEASE_LABEL_PATTERN = /^([^/]+)\/v(\d+\.\d+\.\d+)$/;
 
 function parseVersion(text) {
   const match = VERSION_PATTERN.exec(text);
@@ -56,86 +54,51 @@ function parseCherryPickBranch(name) {
   return match ? Number(match[1]) : null;
 }
 
-// paths-filter の all と listed に当たったファイルの数から、すべての製品に影響するとみなす理由を返す（なければ null）。
-// - all に当たったファイルが、GitHub が返す変更ファイルの上限以上ある（一覧が途中で切れているかもしれない。
-//   paths-filter は名前の変更を 2 件と数えるので、上限ちょうどでも切れていないことはあるが、安全側に倒す）
-// - 製品のパス設定に書かれていないファイルの変更がある（all に当たったファイルが listed より多い）
-function reasonForAllProducts({ allFileCount, listedFileCount }) {
-  if (!Number.isInteger(allFileCount) || !Number.isInteger(listedFileCount)) {
-    throw new Error('paths-filter の all と listed の件数がありません。.github/product-paths.yml を確かめてください。');
-  }
-  if (allFileCount >= MAX_LISTED_FILES) return `変更ファイルが ${MAX_LISTED_FILES} 件以上あるため、すべての製品に影響するとみなしました。`;
-  if (allFileCount > listedFileCount) {
-    return '.github/product-paths.yml に書かれていないパスの変更があるため、すべての製品に影響するとみなしました。そのパスを使う製品に書き足してください。';
-  }
-  return null;
-}
-
 // 変更が影響する製品を、paths-filter が当てたフィルタの名前から決める。
+// 製品のパス設定に書かれていないファイル（all に当たって listed に当たらないもの）があれば、すべての製品に影響するとみなす。
 function findAffectedProducts({ matched, products, allFileCount, listedFileCount }) {
-  const reason = reasonForAllProducts({ allFileCount, listedFileCount });
-  if (reason) return { products: [...products], reason };
+  if (allFileCount > listedFileCount) {
+    return {
+      products: [...products],
+      reason: '.github/product-paths.yml に書かれていないパスの変更があるため、すべての製品に影響するとみなしました。そのパスを使う製品に書き足してください。',
+    };
+  }
   return { products: products.filter((product) => matched.includes(product)), reason: null };
 }
 
-// PR のラベルのうち、リリースラベル（<製品名>/vX.Y.Z）とその形式の誤りを取り出す。
-// <製品名>/ で始まるか、/v<数字> を含むラベルをリリースラベルのつもりとみなす。
+// PR のラベルのうち、products の製品のリリースラベル（<製品名>/vX.Y.Z）を { label, product, version } で返す。ほかのラベルは無視する。
 function extractReleaseLabels(labels, products) {
-  const releaseLabels = [];
-  const errors = [];
-  for (const label of labels) {
-    const slash = label.indexOf('/');
-    if (slash < 0) continue;
-    const product = label.slice(0, slash);
-    const rest = label.slice(slash + 1);
-    const known = products.includes(product);
-    if (!known && !/^v\d/.test(rest)) continue;
-    if (!known) {
-      errors.push(`${label}：製品 ${product} は VERSION ファイルにありません。`);
-      continue;
-    }
-    const match = RELEASE_LABEL_VERSION_PATTERN.exec(rest);
-    if (!match) {
-      errors.push(`${label}：リリースラベルの形式（${product}/vX.Y.Z）になっていません。`);
-      continue;
-    }
-    releaseLabels.push({ label, product, version: match[1] });
-  }
-  return { releaseLabels, errors };
+  return labels.flatMap((label) => {
+    const match = RELEASE_LABEL_PATTERN.exec(label);
+    return match && products.includes(match[1]) ? [{ label, product: match[1], version: match[2] }] : [];
+  });
 }
 
 // baseBranch: PR のマージ先
 // labels: PR に付いているラベル
 // affectedProducts: 変更が影響する製品
 // versionFile / baseVersionFile: マージ後とマージ前の VERSION ファイルの中身
-// branches: 今あるブランチの名前（リリースブランチを含む）
-// archivedLabels: PR に付いているラベルのうち、アーカイブ済みのもの（リリース手順でリリース済みのラベルをアーカイブする）
-function checkReleaseLabels({ baseBranch, labels, affectedProducts, versionFile, baseVersionFile, branches, archivedLabels = [] }) {
+// branches: 今あるリリースブランチの名前
+// リリース済みのバージョンのラベルは、そのリリースブランチが消えている（Tag Creation がリリースタグを打って消す）ので、
+// 「マージ先のバージョンか、今あるリリースブランチのバージョン」の決まりで止まる。
+function checkReleaseLabels({ baseBranch, labels, affectedProducts, versionFile, baseVersionFile, branches }) {
   const versions = parseVersionFile(versionFile);
   const baseVersions = parseVersionFile(baseVersionFile);
   const products = Object.keys(versions);
-  const warnings = [];
-  const { releaseLabels: allReleaseLabels, errors } = extractReleaseLabels(labels, products);
-  let releaseLabels = allReleaseLabels;
+  const errors = [];
+  let releaseLabels = extractReleaseLabels(labels, products);
   const hasBranch = (product, version) => branches.includes(`release/${product}/v${version}`);
-
-  const bumpedProducts = products.filter((product) => baseVersions[product] !== versions[product]);
-  for (const product of Object.keys(baseVersions)) {
-    if (!(product in versions)) warnings.push(`VERSION ファイルから ${product} がなくなります。`);
-  }
 
   let release = null;
   let requiredProducts;
   if (baseBranch === 'main') {
-    requiredProducts = [...new Set([...affectedProducts.filter((product) => products.includes(product)), ...bumpedProducts])];
+    requiredProducts = affectedProducts.filter((product) => products.includes(product));
   } else {
     release = parseReleaseBranch(baseBranch);
     if (!release || !products.includes(release.product)) {
-      errors.push(`マージ先の ${baseBranch} は、main でも release/<製品名>/vX.Y.Z の形式のリリースブランチでもありません。`);
-      return { errors, warnings, releaseLabels };
+      return { errors: [`マージ先の ${baseBranch} は、main でも release/<製品名>/vX.Y.Z の形式のリリースブランチでもありません。`], releaseLabels };
     }
     requiredProducts = [release.product];
-    warnings.push(`main 以外（${baseBranch}）に向けた PR です。main にデグレが出ないか確認してください。`);
     for (const { label, product } of releaseLabels) {
       if (product !== release.product) {
         errors.push(`${label}：${release.product} のリリースブランチへの PR には、${release.product} のリリースラベルだけを付けてください。`);
@@ -151,18 +114,15 @@ function checkReleaseLabels({ baseBranch, labels, affectedProducts, versionFile,
 
   const labelsByProduct = new Map();
   for (const releaseLabel of releaseLabels) {
-    const list = labelsByProduct.get(releaseLabel.product) ?? [];
-    list.push(releaseLabel);
-    labelsByProduct.set(releaseLabel.product, list);
+    labelsByProduct.set(releaseLabel.product, [...(labelsByProduct.get(releaseLabel.product) ?? []), releaseLabel]);
   }
-
   for (const product of requiredProducts) {
     if (!labelsByProduct.has(product)) {
       errors.push(`${product} に影響する変更ですが、${product} のリリースラベルが付いていません。`);
     }
   }
   // 影響しない製品のラベルは止める（古いバージョンなら、関係のない変更がその製品のリリースブランチに cherry-pick される）。
-  // どの製品にも影響しない変更（docs や自動化だけなど）には、リリースラベルは付けない。
+  // どの製品にも影響しない変更（docs や自動化、VERSION だけなど）には、リリースラベルは付けない。
   if (!release) {
     for (const product of labelsByProduct.keys()) {
       if (!requiredProducts.includes(product)) {
@@ -178,110 +138,77 @@ function checkReleaseLabels({ baseBranch, labels, affectedProducts, versionFile,
     }
   }
 
-  // VERSION を変える PR では、バージョンは上げるだけで、ラベルは上げた後のバージョンにする。
-  // main で上げるときは、上げる前のバージョンのリリースブランチを先に作っておく（開発フェーズの入り方の順番）。
-  for (const product of bumpedProducts) {
+  // VERSION は上げるだけ。main で上げるときは、上げる前のバージョンのリリースブランチを先に作っておく（開発フェーズの入り方の順番）。
+  // VERSION を上げる PR に製品のラベルを付けるなら、上げた後のバージョンにする（古いバージョンなら、上げた VERSION ごと cherry-pick される）。
+  for (const product of products.filter((p) => baseVersions[p] !== undefined && baseVersions[p] !== versions[p])) {
     if (release && product !== release.product) continue;
     const [before, after] = [baseVersions[product], versions[product]];
-    if (before !== undefined && compareVersions(after, before) < 0) {
+    if (compareVersions(after, before) < 0) {
       errors.push(`VERSION の ${product} を ${before} から ${after} に下げています。`);
-    } else if (!release && before !== undefined && !hasBranch(product, before)) {
+    } else if (!release && !hasBranch(product, before)) {
       errors.push(`VERSION の ${product} を上げる前に、release/${product}/v${before} を作ってください（Actions の「Release Preparation」を使うと順番どおりに進みます）。`);
     }
     for (const { label, version } of labelsByProduct.get(product) ?? []) {
-      if (version !== after) {
-        errors.push(`${label}：VERSION の ${product} を ${after} にする PR には、${product}/v${after} を付けてください。`);
-      }
+      if (version !== after) errors.push(`${label}：VERSION の ${product} を ${after} にする PR には、${product}/v${after} を付けてください。`);
     }
   }
 
   // ラベルのバージョンは、マージ先のバージョン以下で、マージ先のバージョンか、今あるリリースブランチのバージョンでなければならない。
-  // マージ先のバージョンは、main ならマージ後の VERSION、リリースブランチならブランチ名
-  // （リリースブランチで、マージ後の VERSION がブランチ名と違うときは、上の「一致しません」で止まる）。
+  // マージ先のバージョンは、main ならマージ後の VERSION、リリースブランチならブランチ名。
   for (const { label, product, version } of releaseLabels) {
     const upper = release ? release.version : versions[product];
-    if (archivedLabels.includes(label)) {
-      errors.push(`${label}：リリース済みのラベル（アーカイブ済み）です。これから入るリリースのバージョンを付けてください。`);
-    } else if (compareVersions(version, upper) > 0) {
+    if (compareVersions(version, upper) > 0) {
       const target = release ? `マージ先のブランチのバージョン（v${upper}）` : `マージ後の VERSION（${product}/${upper}）`;
       errors.push(`${label}：${target}より新しいバージョンです。`);
     } else if (version !== upper && !hasBranch(product, version)) {
-      errors.push(`${label}：${product} に v${version} のブランチがありません。main の VERSION か、今あるリリースブランチのバージョンを付けてください。`);
+      errors.push(`${label}：${product} に v${version} のリリースブランチがありません（リリース済みか、まだ作っていません）。main の VERSION か、今あるリリースブランチのバージョンを付けてください。`);
     }
   }
 
-  return { errors, warnings, releaseLabels };
+  return { errors, releaseLabels };
 }
 
-// マージされた PR の変更を cherry-pick するブランチを決める。
-// 製品ごとに、ラベルのバージョン以上、マージ先のバージョン以下のリリースブランチを返す（マージ先自身は除く）。
-// マージ先のバージョンは、main ならマージ後の VERSION（VERSION を上げる前に作った同じバージョンのブランチも入る）、リリースブランチならブランチ名。
-// cherry-pick の PR には行き先のブランチのバージョンのラベルを付けるので、その PR がマージされても先へは広がらない。
-// missing には、ラベルのバージョンのリリースブランチがないもの（リリース後に消したか、まだ作っていない）を返す。
-function findCherryPickTargets({ baseBranch, labels, versionFile, branches }) {
-  const versions = parseVersionFile(versionFile);
-  const products = Object.keys(versions);
-  const { releaseLabels, errors: problems } = extractReleaseLabels(labels, products);
-  const release = baseBranch === 'main' ? null : parseReleaseBranch(baseBranch);
-  if (baseBranch !== 'main' && !release) {
-    problems.push(`マージ先の ${baseBranch} は、main でも release/<製品名>/vX.Y.Z の形式のリリースブランチでもありません。`);
-    return { targets: [], problems, missing: [] };
-  }
+// PR の変更が、product の version のリリースに入るべきか（開発ルールの「リリースラベル」）。
+// その製品のリリースラベルのバージョン以上で、main にマージした PR ならそれより新しいすべてのバージョン、
+// リリースブランチにマージした PR ならそのブランチのバージョンまで。cherry-pick の PR は、元の PR の変更を運ぶものなので数えない。
+// pull: { base, head, labels }（labels はラベルの名前）
+function belongsTo(pull, product, version) {
+  if (parseCherryPickBranch(pull.head) !== null) return false;
+  const base = pull.base === 'main' ? null : parseReleaseBranch(pull.base);
+  if (pull.base !== 'main' && !(base && base.product === product && compareVersions(version, base.version) <= 0)) return false;
+  return extractReleaseLabels(pull.labels, [product]).some((label) => compareVersions(label.version, version) <= 0);
+}
 
-  const releaseBranches = branches.map(parseReleaseBranch).filter(Boolean);
-  const targets = [];
-  const missing = [];
-  for (const { label, product, version } of releaseLabels) {
-    // リリースブランチへの PR に付いた他の製品のラベルは、ラベルのチェックで止めているので無視する
-    if (release && product !== release.product) continue;
-    const upper = release ? release.version : versions[product];
-    if (compareVersions(version, upper) > 0) {
-      problems.push(`${label}：マージ先のバージョン（v${upper}）より新しいバージョンです。`);
-      continue;
-    }
-    const productBranches = releaseBranches.filter((branch) => branch.product === product);
-    if (compareVersions(version, upper) < 0 && !productBranches.some((branch) => branch.version === version)) {
-      missing.push({ label, product, version });
-    }
-    for (const branch of productBranches) {
-      const name = `release/${product}/v${branch.version}`;
-      if (compareVersions(branch.version, version) >= 0 && compareVersions(branch.version, upper) <= 0 && name !== baseBranch) {
-        targets.push(name);
-      }
-    }
-  }
-  return { targets: [...new Set(targets)].sort(), problems, missing };
+// マージされた PR（pull: { base, head, labels }）の変更を cherry-pick するブランチを、今あるリリースブランチ（branches）から決める。
+// 変更が入るべきバージョン（belongsTo）のブランチのうち、マージ先以外。main にマージした PR には上限がない
+// （マージの時点で main のバージョンより新しいブランチはなく、あとから作られる修正フェーズのブランチにも入れるため）。
+function findCherryPickTargets(pull, branches) {
+  return branches
+    .filter((name) => {
+      const branch = parseReleaseBranch(name);
+      return branch && name !== pull.base && belongsTo(pull, branch.product, branch.version);
+    })
+    .sort();
 }
 
 // リリースの準備（開発ルールの「main ブランチにおいて機能の開発は終了しリリース前の準備フェーズに入りたい場合」）で、
 // main の今のバージョンから作るリリースブランチと、次のバージョン（bump は minor か major）とそのリリースラベルを決める。
 function planReleasePrep({ versionFile, product, bump }) {
-  const versions = parseVersionFile(versionFile);
-  if (!(product in versions)) {
-    return { error: `製品 ${product} は VERSION ファイルにありません（${Object.keys(versions).join('、')}）。` };
-  }
-  const currentVersion = versions[product];
+  const currentVersion = parseVersionFile(versionFile)[product];
   const [major, minor] = parseVersion(currentVersion);
-  const nextVersions = { minor: `${major}.${minor + 1}.0`, major: `${major + 1}.0.0` };
-  if (!(bump in nextVersions)) {
-    return { error: `上げ方 ${bump} は minor か major にしてください。` };
-  }
-  const nextVersion = nextVersions[bump];
+  const nextVersion = bump === 'major' ? `${major + 1}.0.0` : `${major}.${minor + 1}.0`;
   return {
     currentVersion,
     nextVersion,
     releaseBranch: `release/${product}/v${currentVersion}`,
+    releaseTag: `${product}/v${currentVersion}`,
     nextLabel: `${product}/v${nextVersion}`,
   };
 }
 
 // 修正フェーズ（開発ルールの「リリース済みのバージョンに対しての修正フェーズに入りたい場合」）で、
 // 製品の最新のリリースタグ（<製品名>/vX.Y.Z。rc などは除く）と、そこから作るリリースブランチ（次のパッチバージョン）を決める。
-function planHotfixPrep({ versionFile, product, tags }) {
-  const products = Object.keys(parseVersionFile(versionFile));
-  if (!products.includes(product)) {
-    return { error: `製品 ${product} は VERSION ファイルにありません（${products.join('、')}）。` };
-  }
+function planHotfixPrep({ product, tags }) {
   const prefix = `${product}/v`;
   const released = tags.filter((tag) => tag.startsWith(prefix) && parseVersion(tag.slice(prefix.length))).map((tag) => tag.slice(prefix.length));
   if (released.length === 0) {
@@ -307,10 +234,7 @@ function planRelease({ branch, tags }) {
     return { error: `${branch} はリリースブランチ（release/<製品名>/vX.Y.Z）ではありません。Use workflow from でリリースブランチを選んで実行してください。` };
   }
   const releaseTag = `${release.product}/v${release.version}`;
-  const rcNumbers = tags
-    .map((tag) => (tag.startsWith(`${releaseTag}-rc.`) ? tag.slice(`${releaseTag}-rc.`.length) : ''))
-    .filter((n) => /^[1-9]\d*$/.test(n))
-    .map(Number);
+  const rcNumbers = tags.filter((tag) => tag.startsWith(`${releaseTag}-rc.`)).map((tag) => Number(tag.slice(`${releaseTag}-rc.`.length))).filter((n) => n > 0);
   const latestRc = rcNumbers.length > 0 ? Math.max(...rcNumbers) : null;
   return {
     product: release.product,
@@ -324,19 +248,14 @@ function planRelease({ branch, tags }) {
 
 // VERSION ファイルの、その製品の行だけを書き換える（コメントやほかの行はそのまま）。
 function setVersion(versionFile, product, version) {
-  let found = false;
-  const lines = versionFile.split('\n').map((line) => {
-    const trimmed = line.trim();
-    if (trimmed === '' || trimmed.startsWith('#') || trimmed.split('/')[0] !== product) return line;
-    found = true;
-    return `${product}/${version}`;
-  });
-  if (!found) throw new Error(`VERSION ファイルに ${product} がありません`);
-  return lines.join('\n');
+  return versionFile
+    .split('\n')
+    .map((line) => (line.trim().split('/')[0] === product && !line.trim().startsWith('#') ? `${product}/${version}` : line))
+    .join('\n');
 }
 
 module.exports = {
-  MAX_LISTED_FILES,
+  belongsTo,
   checkReleaseLabels,
   cherryPickBranch,
   compareVersions,
@@ -349,6 +268,5 @@ module.exports = {
   planHotfixPrep,
   planRelease,
   planReleasePrep,
-  reasonForAllProducts,
   setVersion,
 };

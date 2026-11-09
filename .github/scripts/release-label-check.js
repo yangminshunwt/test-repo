@@ -1,59 +1,43 @@
-// release-label-check.yml から actions/github-script で呼ぶ。
-// PR の情報を GitHub から集めて checkReleaseLabels に渡し、結果をジョブに反映する。
+// release-label-check.yml と ci.yml から actions/github-script で呼ぶ。
+// 作業場所には、PR の先頭をすべての履歴（ほかのブランチも）つきで取ってある。
+// ルールセットで「マージ先の最新を取り込んでから」スカッシュでマージするので、マージできるときは PR の先頭の中身が
+// マージ後の中身と同じになる。そのため、マージ後の VERSION は PR の先頭、マージ前の VERSION はマージ先との分かれ目から読む。
 'use strict';
 
 const { execFileSync } = require('child_process');
 const fs = require('fs');
-const { listReleaseBranches } = require('./github-helpers.js');
 const { checkReleaseLabels, findAffectedProducts, parseVersionFile } = require('./release-labels.js');
 
-module.exports = async ({ github, context, core }) => {
-  const { owner, repo } = context.repo;
-  const pr = context.payload.pull_request;
-  // イベントの後にマージ先が変わっていても今のマージ先で判定するため、前のステップで取り直したマージ先を使う
-  const baseBranch = process.env.BASE_REF;
+const git = (...args) => execFileSync('git', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
 
-  // イベントの後に付け外しされたラベルも含めるため、今のラベルを取り直す。
-  const labelObjects = await github.paginate(github.rest.issues.listLabelsOnIssue, {
-    owner,
-    repo,
-    issue_number: pr.number,
-    per_page: 100,
-  });
-  const labels = labelObjects.map((label) => label.name);
-  const archivedLabels = labelObjects.filter((label) => label.archived_at).map((label) => label.name);
+// PR の今のマージ先とラベル（イベントの後に変わっていても今の状態で判定するため、API で取り直す）と、
+// PR の先頭とマージ先との分かれ目（paths-filter が変更を探す起点）を出力する。
+async function findBase({ github, context, core }) {
+  const { data: pr } = await github.rest.pulls.get({ ...context.repo, pull_number: context.payload.pull_request.number });
+  core.setOutput('base_ref', pr.base.ref);
+  core.setOutput('base_sha', git('merge-base', 'HEAD', `refs/remotes/origin/${pr.base.ref}`));
+  core.setOutput('labels', JSON.stringify(pr.labels.map((label) => label.name)));
+}
 
-  // チェックアウトされているのは PR をマージした結果のコミットで、その第 1 親がマージ前のマージ先になる。
+async function check({ core }) {
+  const env = process.env;
+  const baseBranch = env.BASE_REF;
+  const labels = JSON.parse(env.LABELS);
   const versionFile = fs.readFileSync('VERSION', 'utf8');
-  // マージ先に VERSION がない（手で作ったブランチなど）ときは、空とみなす
-  let baseVersionFile = '';
-  try {
-    baseVersionFile = execFileSync('git', ['show', 'HEAD^1:VERSION'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
-  } catch {
-    core.info('マージ先に VERSION がないので、空とみなします。');
-  }
-  const products = Object.keys(parseVersionFile(versionFile));
-
-  // paths-filter の出力（当たったフィルタの名前の JSON 配列と、all・listed に当たったファイルの数）
   const affected = findAffectedProducts({
-    matched: JSON.parse(process.env.AFFECTED_PRODUCTS || '[]'),
-    products,
-    allFileCount: Number.parseInt(process.env.ALL_FILE_COUNT, 10),
-    listedFileCount: Number.parseInt(process.env.LISTED_FILE_COUNT, 10),
+    matched: JSON.parse(env.AFFECTED_PRODUCTS),
+    products: Object.keys(parseVersionFile(versionFile)),
+    allFileCount: Number(env.ALL_FILE_COUNT),
+    listedFileCount: Number(env.LISTED_FILE_COUNT),
   });
-
-  const branches = await listReleaseBranches(github, context.repo);
-
-  const { errors, warnings } = checkReleaseLabels({
+  const { errors } = checkReleaseLabels({
     baseBranch,
     labels,
     affectedProducts: affected.products,
     versionFile,
-    baseVersionFile,
-    branches,
-    archivedLabels,
+    baseVersionFile: git('show', `${env.BASE_SHA}:VERSION`),
+    branches: git('for-each-ref', '--format=%(refname:lstrip=3)', 'refs/remotes/origin/release/').split('\n').filter(Boolean),
   });
-  if (affected.reason) warnings.unshift(affected.reason);
 
   await core.summary
     .addHeading('リリースラベルのチェック', 3)
@@ -64,12 +48,11 @@ module.exports = async ({ github, context, core }) => {
       ['ラベル', labels.join('、') || '（なし）'],
       ['結果', errors.length === 0 ? 'OK' : `NG（${errors.length} 件）`],
     ])
-    .addList([...errors, ...warnings])
+    .addList(affected.reason ? [affected.reason, ...errors] : errors)
     .write();
-
-  for (const warning of warnings) core.warning(warning);
+  if (affected.reason) core.warning(affected.reason);
   for (const error of errors) core.error(error);
-  if (errors.length > 0) {
-    core.setFailed(`リリースラベルのルールを満たしていません（${errors.length} 件）。`);
-  }
-};
+  if (errors.length > 0) core.setFailed(`リリースラベルのルールを満たしていません（${errors.length} 件）。`);
+}
+
+module.exports = { findBase, check };
