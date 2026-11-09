@@ -120,14 +120,12 @@ function checkReleaseLabels({ baseBranch, labels, affectedProducts, versionFile,
     }
   }
   // 影響しない製品のラベルは止める（古いバージョンなら、関係のない変更がその製品のリリースブランチに cherry-pick される）。
-  // どの製品にも影響しない変更（docs や自動化、VERSION だけなど）には、リリースラベルは付けない。
-  if (!release) {
-    for (const product of labelsByProduct.keys()) {
-      if (!requiredProducts.includes(product)) {
-        errors.push(
-          `${product} に影響する変更はありませんが、${product} のリリースラベルが付いています。外すか、${product} が使うパスなら .github/product-paths.yml に書き足してください。`,
-        );
-      }
+  // main への PR で、どの製品にも影響しない変更（docs や自動化、VERSION だけなど）には、リリースラベルは付けない。
+  for (const product of labelsByProduct.keys()) {
+    if (!requiredProducts.includes(product)) {
+      errors.push(
+        `${product} に影響する変更はありませんが、${product} のリリースラベルが付いています。外すか、${product} が使うパスなら .github/product-paths.yml に書き足してください。`,
+      );
     }
   }
   for (const [product, list] of labelsByProduct) {
@@ -259,7 +257,6 @@ module.exports = {
   findAffectedProducts,
   findCherryPickTargets,
   parseCherryPickBranch,
-  parseReleaseBranch,
   parseVersionFile,
   planHotfixPrep,
   planRelease,

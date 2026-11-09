@@ -10,7 +10,6 @@ const {
   findAffectedProducts,
   findCherryPickTargets,
   parseCherryPickBranch,
-  parseReleaseBranch,
   parseVersionFile,
   planHotfixPrep,
   planRelease,
@@ -65,12 +64,6 @@ test('バージョンを数値として比べる', () => {
   assert.ok(compareVersions('1.10.0', '1.9.0') > 0);
   assert.ok(compareVersions('1.2.3', '1.2.3') === 0);
   assert.ok(compareVersions('0.9.9', '1.0.0') < 0);
-});
-
-test('リリースブランチの名前を読む', () => {
-  assert.deepEqual(parseReleaseBranch('release/product-a/v1.2.3'), { product: 'product-a', version: '1.2.3' });
-  assert.equal(parseReleaseBranch('main'), null);
-  assert.equal(parseReleaseBranch('release/product-a/1.2.3'), null);
 });
 
 test('main：影響する製品のラベルがあれば OK', () => {
@@ -347,6 +340,7 @@ test('リリース手順：rc タグは 1 から順に、リリースタグは�
 
 test('リリース手順：リリースブランチ以外では NG', () => {
   assert.match(planRelease({ branch: 'main', tags: [] }).error, /リリースブランチ/);
+  assert.match(planRelease({ branch: 'release/product-a/1.2.3', tags: [] }).error, /リリースブランチ/);
 });
 
 test('リリース済みのバージョン（Tag Creation がリリースブランチを消したもの）のラベルは NG', () => {

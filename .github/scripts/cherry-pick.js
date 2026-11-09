@@ -15,6 +15,7 @@ function manualGuide(number) {
   return [
     `手で cherry-pick するときは、行き先のブランチから \`${cherryPickBranch(number, '<行き先のブランチ>')}\` という名前の作業ブランチを作って cherry-pick し、行き先のブランチのバージョンのリリースラベル（例：\`release/product-a/v1.4.0\` なら \`product-a/v1.4.0\`）を付けて PR を出してください。この名前にしておくと、自動でやり直したときに重ねて作られません。`,
     `原因を直して自動でやり直すときは、Actions の「Cherry-Pick」→「Run workflow」で、PR の番号 ${number} を指定してください。`,
+    '行き先のブランチがもうない（リリースして削除された）ときは、手での cherry-pick もやり直しも要りません（ブランチも作り直さないでください）。変更はそのリリースには入っておらず、修正フェーズに入れるときは Hotfix Preparation が自動で cherry-pick します。',
   ].join('\n\n');
 }
 
@@ -73,8 +74,8 @@ async function waitForMergeLink(github, repo, core, pr) {
   return false;
 }
 
-// cherry-pick の PR に、行き先のブランチのバージョンのリリースラベルを付ける（元の PR のラベルを写すと、その PR がマージされたときに
-// さらに cherry-pick が広がるため）。前の実行で作られた PR にも付けるため、行き先ごとにブランチ名から探す。
+// cherry-pick の PR に、行き先のブランチのバージョンのリリースラベルを付ける（リリースブランチへの PR にはそのブランチの製品のラベルが要り、
+// 元の PR のバージョンはリリース済みでブランチがないことがあるため）。前の実行で作られた PR にも付けるため、行き先ごとにブランチ名から探す。
 async function labelPullRequests({ github, context }) {
   const repo = context.repo;
   for (const target of process.env.TARGETS.split(' ').filter(Boolean)) {
