@@ -1,3 +1,7 @@
+<<<<<<< HEAD
 product-b fix2-1793913530
+=======
+product-b fix-1794232456
+>>>>>>> 4d9fcc6 (reg: k2-conflict (#596))
 
 xxcxcx
