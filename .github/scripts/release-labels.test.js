@@ -133,6 +133,17 @@ test('main：上げる前のバージョンのリリースブランチがなけ�
   assertOk(check(add));
 });
 
+test('main：VERSION のパッチを上げる PR は NG（パッチは修正フェーズで使う）', () => {
+  const branches = [...BRANCHES, 'release/product-a/v1.5.0'];
+  const bump = { affectedProducts: [], baseVersion: versionFile('1.5.0', '1.5.0'), branches, labels: [] };
+  assertError(check({ ...bump, version: versionFile('1.5.1', '1.5.0') }), /パッチを 0 にしてください/);
+  assertOk(check({ ...bump, version: versionFile('1.6.0', '1.5.0') }));
+  assertOk(check({ ...bump, version: versionFile('2.0.0', '1.5.0') }));
+  // 修正フェーズのリリースブランチでは、パッチを上げる
+  const hotfix = { baseBranch: 'release/product-a/v1.2.1', branches: [...BRANCHES, 'release/product-a/v1.2.1'], affectedProducts: [], baseVersion: versionFile('1.2.0', '1.2.0'), labels: ['product-a/v1.2.1'] };
+  assertOk(check({ ...hotfix, version: versionFile('1.2.1', '1.2.0') }));
+});
+
 test('main：VERSION を下げる PR は NG', () => {
   assertError(
     check({ labels: ['product-a/v1.4.0'], version: versionFile('1.4.0', '1.5.0'), baseVersion: versionFile('1.5.0', '1.5.0') }),
