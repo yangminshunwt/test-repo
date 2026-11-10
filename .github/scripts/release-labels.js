@@ -135,11 +135,14 @@ function checkReleaseLabels({ baseBranch, labels, affectedProducts, versionFile,
   }
 
   // VERSION は上げるだけ。main で上げるときは、上げる前のバージョンのリリースブランチを先に作っておく（開発フェーズの入り方の順番）。
+  // main のバージョンのパッチは 0 にする（パッチは修正フェーズのリリースブランチで使うので、main と同じバージョンにならないように）。
   // VERSION を上げる PR に製品のラベルを付けるなら、上げた後のバージョンにする（古いバージョンなら、上げた VERSION ごと cherry-pick される）。
   for (const product of products.filter((p) => baseVersions[p] !== undefined && baseVersions[p] !== versions[p] && (!release || p === release.product))) {
     const [before, after] = [baseVersions[product], versions[product]];
     if (compareVersions(after, before) < 0) {
       errors.push(`VERSION の ${product} を ${before} から ${after} に下げています。`);
+    } else if (!release && parseVersion(after)[2] !== 0) {
+      errors.push(`VERSION の ${product} を ${after} にしています。main のバージョンは、パッチを 0 にしてください（マイナーかメジャーを上げる。パッチは修正フェーズで使います）。`);
     } else if (!release && !hasBranch(product, before)) {
       errors.push(`VERSION の ${product} を上げる前に、release/${product}/v${before} を作ってください（Actions の「Release Preparation」を使うと順番どおりに進みます）。`);
     }
