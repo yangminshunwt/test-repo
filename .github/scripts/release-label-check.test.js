@@ -42,7 +42,10 @@ const mergeGroup12 = {
 };
 const cwd = process.cwd();
 process.chdir(dir);
-test.after(() => process.chdir(cwd));
+test.after(() => {
+  process.chdir(cwd);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
 
 function fakeCore() {
   const outputs = {};
@@ -50,8 +53,16 @@ function fakeCore() {
   const summary = { addHeading: () => summary, addTable: () => summary, addList: () => summary, write: async () => summary };
   return { outputs, failures, summary, setOutput: (name, value) => (outputs[name] = value), setFailed: (message) => failures.push(message), warning() {}, error() {} };
 }
-const fakeGithub = (labels) => ({
-  rest: { pulls: { get: async ({ pull_number }) => ({ data: { number: pull_number, base: { ref: 'main' }, labels: labels.map((name) => ({ name })) } }) } },
+// number の PR（マージ先は main、ラベルは labels）だけを返す API
+const fakeGithub = (number, labels) => ({
+  rest: {
+    pulls: {
+      get: async ({ pull_number }) => {
+        assert.equal(pull_number, number);
+        return { data: { number, base: { ref: 'main' }, labels: labels.map((name) => ({ name })) } };
+      },
+    },
+  },
 });
 const context = (payload) => ({ repo: { owner: 'o', repo: 'r' }, payload });
 
@@ -72,7 +83,7 @@ async function runCheck(before, labels) {
 test('マージキュー：PR の番号はブランチ名から、マージ前の中身はマージグループの親から取る', async () => {
   git('checkout', '-q', '--detach', group12);
   const core = fakeCore();
-  await findBase({ github: fakeGithub(['product-a/v1.4.0']), context: context({ merge_group: mergeGroup12 }), core });
+  await findBase({ github: fakeGithub(12, ['product-a/v1.4.0']), context: context({ merge_group: mergeGroup12 }), core });
   assert.deepEqual(core.outputs, { base_ref: 'main', before: group11, base_sha: group11, labels: JSON.stringify(['product-a/v1.4.0']) });
 });
 
@@ -88,7 +99,7 @@ test('pull_request：マージ前の中身は今のマージ先の先頭、変�
   const head = commit(root, { 'ProductB/app.txt': 'b fix\n' }, 'Fix product-b');
   git('update-ref', 'refs/remotes/origin/main', group11); // PR を作ったあとで main が進んだ
   const core = fakeCore();
-  await findBase({ github: fakeGithub(['product-b/v2.0.0']), context: context({ pull_request: { number: 13 } }), core });
+  await findBase({ github: fakeGithub(13, ['product-b/v2.0.0']), context: context({ pull_request: { number: 13 } }), core });
   assert.deepEqual(core.outputs, { base_ref: 'main', before: group11, base_sha: root, labels: JSON.stringify(['product-b/v2.0.0']) });
   git('update-ref', 'refs/remotes/origin/main', root);
   assert.equal(git('rev-parse', 'HEAD'), head);
