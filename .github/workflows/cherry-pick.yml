@@ -96,7 +96,7 @@ jobs:
             #${pull_number} を `${target_branch}` に cherry-pick する PR です。
           copy_assignees: true # 元の PR の担当者を引き継ぐ（担当者がいなければ付けない）
           comment_style: summary
-          # コンフリクトしたら、コンフリクトを含んだままの draft PR を作り、解き方を元の PR にコメントする
+          # コンフリクトしたら、コンフリクトを含んだままの draft PR を作り、解き方をその draft PR にコメントする（元の PR のコメントにはリンクだけが出る）
           experimental: '{"conflict_resolution": "draft_commit_conflicts"}'
 
       - name: Label cherry-pick pull requests
