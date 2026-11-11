@@ -133,6 +133,8 @@ run_messages() { # <run ID>：エラーと警告の行（ログがまだ取れ�
   echo "$text" | grep -E '##\[(error|warning)\]' | sed -E 's/.*##\[(error|warning)\]/[\1] /'
 }
 run_log() { local text=""; for _ in 1 2 3 4; do text=$(gh run view "$1" --repo $R --log 2>/dev/null); [ -n "$text" ] && break; sleep 4; done; echo "$text" | cut -f3- | sed -E 's/^[0-9TZ:.-]+ //'; }
+# job の注釈（Environment の決まりで job が始まらなかったときの理由は、ログではなくここにだけ出る）
+run_annotations() { local job; for job in $(gh run view "$1" --repo $R --json jobs --jq '.jobs[].databaseId' 2>/dev/null); do gh api "repos/$R/check-runs/$job/annotations" --jq '.[].message' 2>/dev/null; done; }
 expect_label() { # <ID> <PR> <pass|fail> [正規表現] [since]
   local id=$1 pr=$2 want=$3 pattern=${4:-} since=${5:-} run got text head
   if [ -z "$pr" ]; then record NG "$id" "no PR to check (creation failed)"; return; fi
@@ -215,15 +217,16 @@ wait_cherry_run() {
   echo "$id"
 }
 expect_run() { # <ID> <run ID> <success|failure> [正規表現]
-  local id=$1 run=$2 want=$3 pattern=${4:-} got text
+  local id=$1 run=$2 want=$3 pattern=${4:-} got text ann
   if [ "$run" = DISPATCH_FAILED ]; then record NG "$id" "dispatch failed" "$(oneline < "$TMP/dispatch.err")"; return; fi
   if [ -z "$run" ]; then record NG "$id" "run not found"; return; fi
   got=$(gh run view "$run" --repo $R --json conclusion --jq .conclusion)
-  text=$(run_log "$run")
+  ann=$(run_annotations "$run")
+  text=$(run_log "$run"; echo "$ann")
   if [ "$got" = "$want" ] && { [ -z "$pattern" ] || echo "$text" | grep -qE "$pattern"; }; then
     record OK "$id" "run $run=$got"
   else
-    record NG "$id" "run $run=$got (want $want${pattern:+ / $pattern})" "$(echo "$text" | grep -E '##\[(error|warning)\]' | head -3 | oneline)"
+    record NG "$id" "run $run=$got (want $want${pattern:+ / $pattern})" "$( { echo "$text" | grep -E '##\[(error|warning)\]'; echo "$ann"; } | head -3 | oneline)"
   fi
 }
 prep_pr() { gh pr list --repo $R --state open --json number,headRefName --jq ".[] | select(.headRefName | startswith(\"$1\")) | .number" | head -1; }
@@ -258,8 +261,9 @@ log "R. Release prep"
 [ "$(dispatch release-prep.yml -f product=product-x -f bump=minor)" = DISPATCH_FAILED ] && grep -q "not in the list of allowed values" "$TMP/dispatch.err" \
   && record OK R1 "GitHub rejects a product outside the choices" || record NG R1 "a product outside the choices was accepted"
 gpush origin "origin/main:refs/heads/reg-ref" 2>/dev/null
-expect_run R2 "$(dispatch release-prep.yml --ref reg-ref -f product=product-a -f bump=minor)" failure "main ブランチで実行してください"
-expect_run R2b "$(dispatch hotfix-prep.yml --ref reg-ref -f product=product-a)" failure "main ブランチで実行してください"
+# App の秘密鍵の Environment は main と release/** だけに使わせるので、ほかのブランチでは job が始まらない
+expect_run R2 "$(dispatch release-prep.yml --ref reg-ref -f product=product-a -f bump=minor)" failure 'is not allowed to deploy to automation-app'
+expect_run R2b "$(dispatch hotfix-prep.yml --ref reg-ref -f product=product-a)" failure 'is not allowed to deploy to automation-app'
 gpush origin --delete reg-ref 2>/dev/null
 
 # R3: release prep, merging a PR right after the checkout (catch-up path; timing dependent)
@@ -279,6 +283,9 @@ if git merge-base --is-ancestor "$R0M" "origin/$RA" 2>/dev/null || [ -n "$(pr_fo
 P=$(pr_for "cherry-pick-$R0-to-$RA"); [ -n "$P" ] && expect_merge R3c "$P"
 PA=$(prep_pr "release-prep/product-a/"); expect_label R3d "$PA" pass
 ok_if R3e "the VERSION bump PR is created by the App and has no release label" test "$(author_of "$PA") $(label_names "$PA")" = "$APP "
+# リリースブランチでは Environment の決まりは通るので、スクリプトが main 以外を止める
+expect_run R2c "$(dispatch release-prep.yml --ref "$RA" -f product=product-a -f bump=minor)" failure "main ブランチで実行してください"
+expect_run R2d "$(dispatch hotfix-prep.yml --ref "$RA" -f product=product-a)" failure "main ブランチで実行してください"
 expect_run R5 "$(dispatch release.yml --ref "$RA" -f step=rc)" failure "main の VERSION の product-a が $A0 のまま"
 expect_merge R6 "$PA"
 # 準備するバージョンは Run workflow を押した時点の main で決まるので、VERSION を上げたあとに Re-run しても次のバージョンの準備は始まらない

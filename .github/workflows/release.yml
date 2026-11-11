@@ -28,6 +28,13 @@ jobs:
   release:
     name: release
     runs-on: ubuntu-latest
+    # App の秘密鍵は Environment（automation-app）に置き、main と release/** で動くときだけ読めるようにしている
+    # （どちらも PR でしか変えられないので、PR でマージされ、必須チェックを通ったワークフローだけが秘密鍵を使える。
+    # リリースブランチを作れる管理者は、そのブランチのワークフローで秘密鍵を使える）。
+    # デプロイの記録は作らない（秘密鍵を読むためだけに使う）
+    environment:
+      name: automation-app
+      deployment: false
     steps:
       # リリースブランチの今の先頭を、すべての履歴（main とほかのリリースブランチ、タグも）つきで取る。
       # スクリプトも、このブランチのものを使う（ワークフローと同じブランチのものなので、食い違わない）
