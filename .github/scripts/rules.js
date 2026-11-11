@@ -55,6 +55,13 @@ function parseCherryPickBranch(name) {
   return match ? Number(match[1]) : null;
 }
 
+// マージキューが作るブランチ（refs/heads/gh-readonly-queue/<マージ先>/pr-<PR の番号>-<もとにしたコミット>）の PR の番号。
+// merge_group のイベントには PR の番号がないので、ここから読む（GitHub のドキュメントにあるのは gh-readonly-queue/<マージ先> の部分まで）。
+function parseMergeQueueBranch(ref) {
+  const match = /^(?:refs\/heads\/)?gh-readonly-queue\/.+\/pr-(\d+)-[0-9a-f]+$/.exec(ref);
+  return match ? Number(match[1]) : null;
+}
+
 // 変更が影響する製品を、paths-filter が当てたフィルタの名前から決める。
 // 製品のパス設定に書かれていないファイル（all に当たって listed に当たらないもの）があれば、すべての製品に影響するとみなす。
 function findAffectedProducts({ matched, products, allFileCount, listedFileCount }) {
@@ -261,6 +268,7 @@ module.exports = {
   findAffectedProducts,
   findCherryPickTargets,
   parseCherryPickBranch,
+  parseMergeQueueBranch,
   parseVersionFile,
   planHotfixReleasePrep,
   planRelease,

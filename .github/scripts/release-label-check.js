@@ -1,29 +1,38 @@
 // release-label-check.yml と ci.yml から actions/github-script で呼ぶ。
-// 作業場所には、PR の先頭をすべての履歴（ほかのブランチも）つきで取ってある。
-// マージ後の中身は、PR の先頭と今のマージ先の先頭を手元でマージして作る（GitHub がテスト用のマージコミットを作るのを待たない）。
-// ルールセットで「マージ先の最新を取り込んでから」マージするので、マージできるときは PR の先頭の中身と同じになる。
+// 作業場所には、PR の先頭（マージキューでは、マージグループのコミット）を、すべての履歴（ほかのブランチも）つきで取ってある。
+// マージ後の中身は、マージ前の中身（findBase の before）と作業場所の先頭を手元でマージして作る（GitHub がテスト用のマージコミットを作るのを待たない）。
+// - pull_request：マージ前の中身は、今のマージ先の先頭。ルールセットで「マージ先の最新を取り込んでから」マージするので、
+//   マージできるときは PR の先頭の中身と同じになる（マージキューを使う main では、最新に合わせなくてもキューに入れられるので、
+//   main に入る中身は下の merge_group で確かめる）。
+// - merge_group（マージキュー）：マージ前の中身は、マージグループの親（マージ先に、キューで前にある PR を足したもの）。
+//   マージグループのコミットがそのままマージ先に入るので、手元でマージしても中身は変わらない。親からの変更は、この PR の変更だけになる。
 'use strict';
 
 const { git, localReleaseBranches } = require('./github-helpers.js');
-const { checkReleaseLabels, findAffectedProducts, parseVersionFile } = require('./rules.js');
+const { checkReleaseLabels, findAffectedProducts, parseMergeQueueBranch, parseVersionFile } = require('./rules.js');
 
 // PR の今のマージ先とラベル（イベントの後に変わっていても今の状態で判定するため、API で取り直す）と、
-// PR の先頭とマージ先との分かれ目（paths-filter が変更を探す起点）を出力する。
+// マージ前の中身（before）と、作業場所の先頭とマージ前の中身との分かれ目（paths-filter が変更を探す起点）を出力する。
 async function findBase({ github, context, core }) {
-  const { data: pr } = await github.rest.pulls.get({ ...context.repo, pull_number: context.payload.pull_request.number });
-  core.setOutput('base_ref', pr.base.ref);
-  core.setOutput('base_sha', git('merge-base', 'HEAD', `refs/remotes/origin/${pr.base.ref}`));
+  const group = context.payload.merge_group;
+  const number = group ? parseMergeQueueBranch(group.head_ref) : context.payload.pull_request.number;
+  const { data: pr } = await github.rest.pulls.get({ ...context.repo, pull_number: number });
+  const baseRef = group ? group.base_ref.replace(/^refs\/heads\//, '') : pr.base.ref;
+  const before = group ? group.base_sha : git('rev-parse', `refs/remotes/origin/${baseRef}`);
+  core.setOutput('base_ref', baseRef);
+  core.setOutput('before', before);
+  core.setOutput('base_sha', git('merge-base', 'HEAD', before));
   core.setOutput('labels', JSON.stringify(pr.labels.map((label) => label.name)));
 }
 
 async function check({ core }) {
   const env = process.env;
   const baseBranch = env.BASE_REF;
-  const base = `refs/remotes/origin/${baseBranch}`;
+  const before = env.BEFORE;
   const labels = JSON.parse(env.LABELS);
   let merged;
   try {
-    merged = git('merge-tree', '--write-tree', base, 'HEAD').split('\n')[0];
+    merged = git('merge-tree', '--write-tree', before, 'HEAD').split('\n')[0];
   } catch {
     return core.setFailed(`${baseBranch} とコンフリクトしています。解消して push すると、もう一度チェックします。`);
   }
@@ -39,7 +48,7 @@ async function check({ core }) {
     labels,
     affectedProducts: affected.products,
     versionFile,
-    baseVersionFile: git('show', `${base}:VERSION`),
+    baseVersionFile: git('show', `${before}:VERSION`),
     branches: localReleaseBranches(),
   });
 
