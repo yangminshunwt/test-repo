@@ -14,7 +14,7 @@
 
 - このリポジトリの管理者として `gh auth login` してあり、git で push できること。
 - macOS（BSD の `sed -i ''` と `date -v` を使う）。
-- 自動化の GitHub App がインストールしてあり、変数 `AUTOMATION_APP_CLIENT_ID` と秘密 `AUTOMATION_APP_PRIVATE_KEY` が設定してあること。
+- 自動化の GitHub App がインストールしてあり、リポジトリの変数 `AUTOMATION_APP_CLIENT_ID` と、Environment `automation-app`（main と `release/**/*` だけが使える）の秘密 `AUTOMATION_APP_PRIVATE_KEY` が設定してあること。
 
 手元の作業場所は使わない（毎回、一時フォルダにリポジトリを複製して、そこで動かす）。
 
