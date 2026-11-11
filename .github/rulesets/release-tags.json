@@ -1,5 +1,5 @@
 {
-  "name": "release tags",
+  "name": "release tags: creation, update and deletion",
   "target": "tag",
   "enforcement": "active",
   "conditions": {
