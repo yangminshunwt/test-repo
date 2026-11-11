@@ -217,15 +217,16 @@ wait_cherry_run() {
   echo "$id"
 }
 expect_run() { # <ID> <run ID> <success|failure> [正規表現]
-  local id=$1 run=$2 want=$3 pattern=${4:-} got text
+  local id=$1 run=$2 want=$3 pattern=${4:-} got text ann
   if [ "$run" = DISPATCH_FAILED ]; then record NG "$id" "dispatch failed" "$(oneline < "$TMP/dispatch.err")"; return; fi
   if [ -z "$run" ]; then record NG "$id" "run not found"; return; fi
   got=$(gh run view "$run" --repo $R --json conclusion --jq .conclusion)
-  text=$(run_log "$run"; run_annotations "$run")
+  ann=$(run_annotations "$run")
+  text=$(run_log "$run"; echo "$ann")
   if [ "$got" = "$want" ] && { [ -z "$pattern" ] || echo "$text" | grep -qE "$pattern"; }; then
     record OK "$id" "run $run=$got"
   else
-    record NG "$id" "run $run=$got (want $want${pattern:+ / $pattern})" "$(echo "$text" | grep -E '##\[(error|warning)\]' | head -3 | oneline)"
+    record NG "$id" "run $run=$got (want $want${pattern:+ / $pattern})" "$( { echo "$text" | grep -E '##\[(error|warning)\]'; echo "$ann"; } | head -3 | oneline)"
   fi
 }
 prep_pr() { gh pr list --repo $R --state open --json number,headRefName --jq ".[] | select(.headRefName | startswith(\"$1\")) | .number" | head -1; }

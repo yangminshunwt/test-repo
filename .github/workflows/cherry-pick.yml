@@ -33,7 +33,8 @@ jobs:
     if: github.event_name == 'workflow_dispatch' || github.event.pull_request.merged
     runs-on: ubuntu-latest
     # App の秘密鍵は Environment（automation-app）に置き、main と release/** で動くときだけ読めるようにしている
-    # （どちらもルールセットで守っているので、レビューされたワークフローだけが秘密鍵を使える）。
+    # （どちらも PR でしか変えられないので、PR でマージされ、必須チェックを通ったワークフローだけが秘密鍵を使える。
+    # リリースブランチを作れる管理者は、そのブランチのワークフローで秘密鍵を使える）。
     # デプロイの記録は作らない（秘密鍵を読むためだけに使う）。pull_request_target は main として判定される。
     # main と release/** 以外から Run workflow すると、この job は始まらない（失敗の知らせも出ない）
     environment:
