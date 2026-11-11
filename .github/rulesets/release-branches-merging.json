@@ -1,16 +1,15 @@
 {
-  "name": "main branch",
+  "name": "release branches: merging",
   "target": "branch",
   "enforcement": "active",
   "conditions": {
     "ref_name": {
-      "include": ["~DEFAULT_BRANCH"],
+      "include": ["refs/heads/release/**/*"],
       "exclude": []
     }
   },
   "bypass_actors": [],
   "rules": [
-    { "type": "deletion" },
     { "type": "non_fast_forward" },
     {
       "type": "pull_request",

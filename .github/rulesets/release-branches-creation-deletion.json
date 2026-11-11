@@ -1,5 +1,5 @@
 {
-  "name": "release branch creation and deletion",
+  "name": "release branches: creation and deletion",
   "target": "branch",
   "enforcement": "active",
   "conditions": {
