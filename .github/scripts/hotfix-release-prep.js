@@ -1,11 +1,11 @@
-// hotfix-prep.yml から actions/github-script で呼ぶ処理。
+// hotfix-release-prep.yml から actions/github-script で呼ぶ処理。
 // 作業場所には、今の main をすべての履歴（ブランチとタグも）つきで取ってある。
 'use strict';
 
 const fs = require('fs');
 const path = require('path');
 const { branchHead, createReleaseBranch, createReleaseLabel, git, report } = require('./github-helpers.js');
-const { planHotfixPrep, setVersion } = require('./rules.js');
+const { planHotfixReleasePrep, setVersion } = require('./rules.js');
 
 // 最新のリリースタグから次のパッチバージョンのリリースブランチを作り、そのリリースラベルを作る。
 // すでにできているものはそのまま使うので、Re-run すると続きから進む。
@@ -13,7 +13,7 @@ async function prepare({ github, context, core }) {
   const repo = context.repo;
   if (context.ref !== 'refs/heads/main') return core.setFailed(`main ブランチで実行してください（今は ${context.ref}）。`);
   const product = process.env.PRODUCT;
-  const plan = planHotfixPrep({ product, tags: git('tag', '--list', `${product}/v*`).split('\n').filter(Boolean) });
+  const plan = planHotfixReleasePrep({ product, tags: git('tag', '--list', `${product}/v*`).split('\n').filter(Boolean) });
   if (plan.error) return core.setFailed(plan.error);
   const sha = git('rev-parse', `${plan.releasedTag}^{commit}`);
 

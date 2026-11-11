@@ -1,7 +1,7 @@
 'use strict';
 
-// 製品名の元は VERSION ファイル。製品名を書いているほかの場所（製品のパス設定、Release Preparation と
-// Hotfix Preparation の選択肢）が、VERSION の製品と完全に一致しているかを確かめる。
+// 製品名の元は VERSION ファイル。製品名を書いているほかの場所（製品のパス設定、Normal Release Preparation と
+// Hotfix Release Preparation の選択肢）が、VERSION の製品と完全に一致しているかを確かめる。
 // 製品を足したり消したりするときは、これらを同じ PR で直す。
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -47,7 +47,7 @@ test('製品のパス設定の製品のフィルタと listed が、VERSION の�
   );
 });
 
-for (const workflow of ['release-prep.yml', 'hotfix-prep.yml']) {
+for (const workflow of ['normal-release-prep.yml', 'hotfix-release-prep.yml']) {
   test(`${workflow} の製品の選択肢が、VERSION の製品と一致する`, () => {
     const options = /\n {6}product:[\s\S]*?options:\s*\[([^\]]*)\]/.exec(read(`.github/workflows/${workflow}`));
     assert.ok(options, `${workflow} の product の options が見つかりません`);

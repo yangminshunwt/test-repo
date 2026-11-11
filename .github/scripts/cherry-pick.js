@@ -15,7 +15,7 @@ function manualGuide(number) {
   return [
     `手で cherry-pick するときは、行き先のブランチから \`${cherryPickBranch(number, '<行き先のブランチ>')}\` という名前の作業ブランチを作って cherry-pick し、行き先のブランチのバージョンのリリースラベル（例：\`release/product-a/v1.4.0\` なら \`product-a/v1.4.0\`）を付けて PR を出してください。この名前にしておくと、自動でやり直したときに重ねて作られません。`,
     `原因を直して自動でやり直すときは、Actions の「Cherry-Pick」→「Run workflow」で、PR の番号 ${number} を指定してください。`,
-    '行き先のブランチがもうない（リリースして削除された）ときは、手での cherry-pick もやり直しも要りません（ブランチも作り直さないでください）。変更はそのリリースには入っておらず、修正フェーズに入れるときは Hotfix Preparation が自動で cherry-pick します。',
+    '行き先のブランチがもうない（リリースして削除された）ときは、手での cherry-pick もやり直しも要りません（ブランチも作り直さないでください）。変更はそのリリースには入っておらず、修正フェーズに入れるときは Hotfix Release Preparation が自動で cherry-pick します。',
   ].join('\n\n');
 }
 
@@ -24,7 +24,7 @@ function cherryPickPulls(github, repo, target, state) {
 }
 
 // 元の PR の cherry-pick 先を決めて出力する（今あるリリースブランチと、変更が入っているかは、どちらもチェックアウトした時点のものを見る。
-// そのあとに作られたブランチには、作った Release Preparation・Hotfix Preparation が、入っていない変更の Cherry-Pick を実行する）。
+// そのあとに作られたブランチには、作った Normal Release Preparation・Hotfix Release Preparation が、入っていない変更の Cherry-Pick を実行する）。
 // targets：リリースラベルが表す範囲の、今あるリリースブランチ（cherry-pick の PR にラベルを付ける行き先）
 // branches：そのうち、cherry-pick の PR が開いてもマージされてもいなくて、変更もまだ入っていない行き先（これから cherry-pick する）
 // 前の実行の残りのブランチ（閉じた PR のものか、自動化が作ったもの）は消す。残っていると backport-action がその古い中身で PR を作るため。

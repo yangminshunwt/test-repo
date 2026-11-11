@@ -1,8 +1,8 @@
-name: Hotfix Preparation
+name: Normal Release Preparation
 
-# リリース済みのバージョンに対する修正フェーズに入る（開発ルールの「開発フェーズの入り方」）。
-# その製品の最新のリリースタグから次のパッチバージョンのリリースブランチを作り、リリースラベルを作ってから、
-# そのリリースブランチの VERSION を上げる PR を出す。リリースブランチの自動化（.github）は、タグのものをそのまま使う。
+# リリースの準備フェーズに入る（開発ルールの「開発フェーズの入り方」）。
+# main から今のバージョンのリリースブランチを作り、次のバージョンのリリースラベルを作ってから、
+# main の VERSION を次のバージョンに上げる PR を出す。次のバージョンは今のバージョンから決める。
 on:
   workflow_dispatch:
     inputs:
@@ -12,13 +12,19 @@ on:
         type: choice
         # VERSION ファイルの製品名と同じにする（script test で確かめている）
         options: [product-a, product-b, product-c]
+      bump:
+        description: 'Next version on main (minor: X.Y.Z → X.(Y+1).0, major: X.Y.Z → (X+1).0.0)'
+        required: true
+        type: choice
+        default: minor
+        options: [minor, major]
 
 permissions:
   contents: read
 
 jobs:
-  hotfix-prep:
-    name: hotfix prep
+  normal-release-prep:
+    name: normal release prep
     runs-on: ubuntu-latest
     # App の秘密鍵は Environment（automation-app）に置き、main と release/** で動くときだけ読めるようにしている
     # （どちらも PR でしか変えられないので、PR でマージされ、必須チェックを通ったワークフローだけが秘密鍵を使える。
@@ -29,10 +35,10 @@ jobs:
       deployment: false
     permissions:
       contents: read
-      actions: write # 前のリリースに入らなかった PR の Cherry-Pick を実行する
+      actions: write # リリースブランチに入っていない PR の Cherry-Pick を実行する
       pull-requests: read # マージされた PR の一覧を読む
     steps:
-      # リリースタグとその中身を読むので、すべての履歴（タグも）つきで取る
+      # VERSION を上げる PR は今の main に作る。リリースブランチは実行を始めた時点の main から作るので、すべての履歴（タグも）つきで取る
       - uses: actions/checkout@v7
         with:
           ref: main
@@ -53,55 +59,20 @@ jobs:
         uses: actions/github-script@v9
         env:
           PRODUCT: ${{ inputs.product }}
+          BUMP: ${{ inputs.bump }}
         with:
           retries: 3 # GitHub API の一時的なエラー（5xx）はやり直す
           github-token: ${{ steps.app-token.outputs.token }}
           script: |
-            const { prepare } = require('./.github/scripts/hotfix-prep.js')
+            const { prepare } = require('./.github/scripts/normal-release-prep.js')
             await prepare({ github, context, core })
 
-      - uses: actions/checkout@v7
-        with:
-          ref: ${{ steps.prepare.outputs.release_branch }}
-          path: release-work
-          persist-credentials: false
-
-      - name: Bump VERSION
-        uses: actions/github-script@v9
-        env:
-          RELEASE_WORK: release-work
-          PRODUCT: ${{ inputs.product }}
-          VERSION: ${{ steps.prepare.outputs.next_version }}
-        with:
-          script: |
-            const { bumpVersion } = require('./.github/scripts/hotfix-prep.js')
-            bumpVersion()
-
-      - id: pull-request
-        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
-        with:
-          token: ${{ steps.app-token.outputs.token }}
-          path: release-work
-          base: ${{ steps.prepare.outputs.release_branch }}
-          branch: hotfix-prep/${{ inputs.product }}/v${{ steps.prepare.outputs.next_version }}
-          delete-branch: true
-          add-paths: VERSION
-          commit-message: Bump ${{ inputs.product }} to ${{ steps.prepare.outputs.next_version }}
-          title: Bump ${{ inputs.product }} to ${{ steps.prepare.outputs.next_version }}
-          labels: ${{ steps.prepare.outputs.next_label }}
-          assignees: ${{ github.actor }} # 実行した人を担当者にする
-          body: |
-            `${{ steps.prepare.outputs.release_branch }}`（${{ steps.prepare.outputs.released_tag }} から作ったリリースブランチ）の ${{ inputs.product }} の VERSION を ${{ steps.prepare.outputs.next_version }} に上げる PR です（Hotfix Preparation のワークフローが作りました）。
-
-            この PR がマージされるまで、このリリースブランチへの PR はラベルのチェックで止まるので、早めにマージしてください。
-
-            この PR に手でコミットを足した場合、Hotfix Preparation をもう一度実行すると、そのコミットは消えます。
-
+      # create-pull-request は、この作業場所に浅い fetch（--depth）をして履歴を切り詰めることがあるので、その前に、すべての履歴で確かめる
       - name: Catch up cherry-picks
         uses: actions/github-script@v9
         env:
           PRODUCT: ${{ inputs.product }}
-          VERSION: ${{ steps.prepare.outputs.next_version }}
+          VERSION: ${{ steps.prepare.outputs.current_version }}
           RELEASE_BRANCH: ${{ steps.prepare.outputs.release_branch }}
           BRANCH_SHA: ${{ steps.prepare.outputs.branch_sha }}
         with:
@@ -109,6 +80,24 @@ jobs:
           script: |
             const { catchUp } = require('./.github/scripts/changes.js')
             await catchUp({ github, context, core })
+
+      - id: pull-request
+        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          base: main
+          branch: normal-release-prep/${{ inputs.product }}/v${{ steps.prepare.outputs.next_version }}
+          delete-branch: true
+          add-paths: VERSION
+          commit-message: Bump ${{ inputs.product }} to ${{ steps.prepare.outputs.next_version }}
+          title: Bump ${{ inputs.product }} to ${{ steps.prepare.outputs.next_version }}
+          assignees: ${{ github.actor }} # 実行した人を担当者にする
+          body: |
+            `main` の ${{ inputs.product }} の VERSION を ${{ steps.prepare.outputs.current_version }} から ${{ steps.prepare.outputs.next_version }} に上げる PR です（Normal Release Preparation のワークフローが作りました）。
+
+            `${{ steps.prepare.outputs.release_branch }}` はもう作ってあります。この PR がマージされるまで、${{ inputs.product }} の次のバージョン向けの PR は `main` にマージできないので、早めにマージしてください。
+
+            この PR がコンフリクトしたら（ほかの製品の VERSION を上げる PR が先にマージされたときなど）、Actions の「Normal Release Preparation」を product = ${{ inputs.product }}、bump = ${{ inputs.bump }} でもう一度実行すると、最新の `main` の上に作り直されます。
 
       - name: Summary
         env:
