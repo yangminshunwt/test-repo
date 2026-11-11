@@ -8,7 +8,7 @@ on:
     branches:
       - main
       - 'release/**'
-  # 失敗した行き先の原因を直したあとに、手でやり直す（Release Preparation と Hotfix Preparation も、新しいブランチのために実行する）
+  # 失敗した行き先の原因を直したあとに、手でやり直す（Normal Release Preparation と Hotfix Release Preparation も、新しいブランチのために実行する）
   workflow_dispatch:
     inputs:
       pr_number:

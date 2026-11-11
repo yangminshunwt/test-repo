@@ -258,20 +258,20 @@ RA="release/product-a/v$A0"; RB="release/product-b/v$B0"; RC="release/product-c/
 echo "  main: product-a=$A0 product-b=$B0 product-c=$C0"
 
 # =====================================================================
-log "R. Release prep"
-[ "$(dispatch release-prep.yml -f product=product-x -f bump=minor)" = DISPATCH_FAILED ] && grep -q "not in the list of allowed values" "$TMP/dispatch.err" \
+log "R. Normal release prep"
+[ "$(dispatch normal-release-prep.yml -f product=product-x -f bump=minor)" = DISPATCH_FAILED ] && grep -q "not in the list of allowed values" "$TMP/dispatch.err" \
   && record OK R1 "GitHub rejects a product outside the choices" || record NG R1 "a product outside the choices was accepted"
 gpush origin "origin/main:refs/heads/reg-ref" 2>/dev/null
 # App の秘密鍵の Environment は main と release/** だけに使わせるので、ほかのブランチでは job が始まらない
-expect_run R2 "$(dispatch release-prep.yml --ref reg-ref -f product=product-a -f bump=minor)" failure 'is not allowed to deploy to automation-app'
-expect_run R2b "$(dispatch hotfix-prep.yml --ref reg-ref -f product=product-a)" failure 'is not allowed to deploy to automation-app'
+expect_run R2 "$(dispatch normal-release-prep.yml --ref reg-ref -f product=product-a -f bump=minor)" failure 'is not allowed to deploy to automation-app'
+expect_run R2b "$(dispatch hotfix-release-prep.yml --ref reg-ref -f product=product-a)" failure 'is not allowed to deploy to automation-app'
 gpush origin --delete reg-ref 2>/dev/null
 
-# R3: release prep, merging a PR right after the checkout (catch-up path; timing dependent)
+# R3: normal release prep, merging a PR right after the checkout (catch-up path; timing dependent)
 R0=$(make_pr r0-race main "echo r0-$T > ProductA/r0.txt" "product-a/v$A0"); expect_label R0 "$R0" pass
-BEFORE=$(latest_dispatch release-prep.yml)
-gh workflow run release-prep.yml --repo $R -f product=product-a -f bump=minor
-RUN=0; for _ in $(seq 1 45); do sleep 2; RUN=$(latest_dispatch release-prep.yml); [ "$RUN" -gt "$BEFORE" ] && break; done
+BEFORE=$(latest_dispatch normal-release-prep.yml)
+gh workflow run normal-release-prep.yml --repo $R -f product=product-a -f bump=minor
+RUN=0; for _ in $(seq 1 45); do sleep 2; RUN=$(latest_dispatch normal-release-prep.yml); [ "$RUN" -gt "$BEFORE" ] && break; done
 for _ in $(seq 1 120); do s=$(gh run view "$RUN" --repo $R --json jobs --jq '[.jobs[0].steps[]? | select(.name == "Run actions/checkout@v7")][0].status' 2>/dev/null); [ "$s" = completed ] && break; sleep 1; done
 gh pr merge "$R0" --repo $R --squash >/dev/null 2>&1
 wait_run_done "$RUN"; sleep 3
@@ -282,24 +282,24 @@ R0M=$(gh pr view "$R0" --repo $R --json mergeCommit --jq .mergeCommit.oid)
 git fetch -q origin
 if git merge-base --is-ancestor "$R0M" "origin/$RA" 2>/dev/null || [ -n "$(pr_for "cherry-pick-$R0-to-$RA")" ]; then record OK R3b "#$R0 is in $RA or has a cherry-pick PR to it"; else record NG R3b "#$R0 is neither in $RA nor cherry-picked"; fi
 P=$(pr_for "cherry-pick-$R0-to-$RA"); [ -n "$P" ] && expect_merge R3c "$P"
-PA=$(prep_pr "release-prep/product-a/"); expect_label R3d "$PA" pass
+PA=$(prep_pr "normal-release-prep/product-a/"); expect_label R3d "$PA" pass
 ok_if R3e "the VERSION bump PR is created by the App and has no release label" test "$(author_of "$PA") $(label_names "$PA")" = "$APP "
 # リリースブランチでは Environment の決まりは通るので、スクリプトが main 以外を止める
-expect_run R2c "$(dispatch release-prep.yml --ref "$RA" -f product=product-a -f bump=minor)" failure "main ブランチで実行してください"
-expect_run R2d "$(dispatch hotfix-prep.yml --ref "$RA" -f product=product-a)" failure "main ブランチで実行してください"
+expect_run R2c "$(dispatch normal-release-prep.yml --ref "$RA" -f product=product-a -f bump=minor)" failure "main ブランチで実行してください"
+expect_run R2d "$(dispatch hotfix-release-prep.yml --ref "$RA" -f product=product-a)" failure "main ブランチで実行してください"
 expect_run R5 "$(dispatch release.yml --ref "$RA" -f step=rc)" failure "main の VERSION の product-a が $A0 のまま"
 expect_merge R6 "$PA"
 # 準備するバージョンは Run workflow を押した時点の main で決まるので、VERSION を上げたあとに Re-run しても次のバージョンの準備は始まらない
 gh run rerun "$RUN" --repo $R >/dev/null; sleep 10; wait_run_done "$RUN"; sleep 3
 expect_run R6b "$RUN" success "$RA はすでにあるので"
-ok_if R6c "re-running after the bump creates no new branch or bump PR" sh -c "! git ls-remote --exit-code --heads origin release/product-a/v$(version_of product-a) >/dev/null && [ -z \"\$(gh pr list --repo $R --state open --json headRefName --jq '.[] | select(.headRefName | startswith(\"release-prep/product-a/\")) | .headRefName')\" ]"
-expect_run R7 "$(dispatch release-prep.yml -f product=product-b -f bump=minor)" success
-PB=$(prep_pr "release-prep/product-b/")
-expect_run R7b "$(dispatch release-prep.yml -f product=product-c -f bump=minor)" success
-PC=$(prep_pr "release-prep/product-c/")
+ok_if R6c "re-running after the bump creates no new branch or bump PR" sh -c "! git ls-remote --exit-code --heads origin release/product-a/v$(version_of product-a) >/dev/null && [ -z \"\$(gh pr list --repo $R --state open --json headRefName --jq '.[] | select(.headRefName | startswith(\"normal-release-prep/product-a/\")) | .headRefName')\" ]"
+expect_run R7 "$(dispatch normal-release-prep.yml -f product=product-b -f bump=minor)" success
+PB=$(prep_pr "normal-release-prep/product-b/")
+expect_run R7b "$(dispatch normal-release-prep.yml -f product=product-c -f bump=minor)" success
+PC=$(prep_pr "normal-release-prep/product-c/")
 expect_merge R7c "$PB"
 ok_if R7d "bump PR #$PC for the adjacent VERSION line conflicts" test "$(wait_mergeable "$PC" CONFLICTING)" = CONFLICTING
-expect_run R7e "$(dispatch release-prep.yml -f product=product-c -f bump=minor)" success "pull-request-operation = updated"
+expect_run R7e "$(dispatch normal-release-prep.yml -f product=product-c -f bump=minor)" success "pull-request-operation = updated"
 ok_if R7f "running again makes #$PC mergeable" test "$(wait_mergeable "$PC" MERGEABLE)" = MERGEABLE
 expect_merge R7g "$PC"
 A=$(version_of product-a); B=$(version_of product-b); C=$(version_of product-c)
@@ -516,22 +516,22 @@ U2=$(make_pr u2 main 'echo u2-$T > ProductB/u2.txt' "product-b/v$B"); expect_mer
 UP1=$(pr_for "cherry-pick-$U1-to-$RBN"); UP2=$(pr_for "cherry-pick-$U2-to-$RBN")
 ok_if U3 "a label with main's version is cherry-picked to the same-version release branch" test -n "$UP1" -a -n "$UP2"
 gh pr close "$UP1" --repo $R >/dev/null
-expect_run U4 "$(dispatch release-prep.yml -f product=product-b -f bump=minor)" success "すでにあるので"
+expect_run U4 "$(dispatch normal-release-prep.yml -f product=product-b -f bump=minor)" success "すでにあるので"
 sleep 60
 ok_if U5 "the catch-up re-creates the closed cherry-pick of #$U1" test -n "$(pr_for "cherry-pick-$U1-to-$RBN")"
-UB=$(prep_pr "release-prep/product-b/")
+UB=$(prep_pr "normal-release-prep/product-b/")
 expect_merge U6 "$UB"
 expect_run U7 "$(dispatch release.yml --ref "$RBN" -f step=rc)" failure "入っていない変更があります（#$U1、#$U2）"
 
 # =====================================================================
-log "H1. Hotfix prep (product-c)"
+log "H1. Hotfix release prep (product-c)"
 CH=$(next_patch "$C0")
 # リリースしたブランチが（管理者が作り直したなどで）残っていれば、リリース手順を先に終わらせる
 gpush origin "$(tag_commit "product-c/v$C0"):refs/heads/$RC" 2>/dev/null
-expect_run H1 "$(dispatch hotfix-prep.yml -f product=product-c)" failure "$RC がまだあります"
+expect_run H1 "$(dispatch hotfix-release-prep.yml -f product=product-c)" failure "$RC がまだあります"
 gpush origin --delete "$RC" 2>/dev/null
-expect_run H1b "$(dispatch hotfix-prep.yml -f product=product-c)" success "release/product-c/v$CH を作りました"
-HC=$(prep_pr "hotfix-prep/product-c/")
+expect_run H1b "$(dispatch hotfix-release-prep.yml -f product=product-c)" success "release/product-c/v$CH を作りました"
+HC=$(prep_pr "hotfix-release-prep/product-c/")
 ok_if H1b2 "the hotfix bump PR changes only VERSION (the tag's .github is kept)" test "$(gh pr view "$HC" --repo $R --json files --jq '[.files[].path] | join(",")')" = VERSION
 expect_run H1c "$(dispatch release.yml --ref "release/product-c/v$CH" -f step=rc)" failure "先に VERSION を上げる PR をマージしてください"
 Y=$(make_pr h1-y main 'echo y-$T > ProductC/h1y.txt' "product-c/v$CH"); expect_merge H1d "$Y"; RUN=$(wait_cherry_run "$Y")
@@ -542,23 +542,23 @@ expect_merge H1g "$HC"
 S=$(since_now); gh pr update-branch "$YP" --repo $R >/dev/null 2>&1; expect_label H1h "$YP" pass "" "$S"
 expect_merge H1i "$YP"
 expect_run H1j "$(dispatch release.yml --ref "release/product-c/v$CH" -f step=rc)" failure "入っていない変更があります（#$X）"
-ok_if H1k "Hotfix Preparation cherry-picked #$X (missed by v$C0) to release/product-c/v$CH" test -n "$(pr_for "cherry-pick-$X-to-release/product-c/v$CH")"
+ok_if H1k "Hotfix Release Preparation cherry-picked #$X (missed by v$C0) to release/product-c/v$CH" test -n "$(pr_for "cherry-pick-$X-to-release/product-c/v$CH")"
 ok_if H1l "#$E6P (merged directly into the released branch) is not cherry-picked" test -z "$(pr_for "cherry-pick-$E6P-to-release/product-c/v$CH")"
 expect_merge H1m "$(pr_for "cherry-pick-$X-to-release/product-c/v$CH")"
 expect_run H1n "$(dispatch release.yml --ref "release/product-c/v$CH" -f step=rc)" success "product-c/v$CH-rc.1 を"
 
-log "H2. Hotfix prep (product-a)"
+log "H2. Hotfix release prep (product-a)"
 AH=$(next_patch "$A0")
-expect_run H2b "$(dispatch hotfix-prep.yml -f product=product-a)" success "release/product-a/v$AH を作りました"
-expect_merge H2c "$(prep_pr "hotfix-prep/product-a/")"
-expect_run H2d "$(dispatch hotfix-prep.yml -f product=product-a)" success "すでにあるので"
-ok_if H2e "running again creates no PR" test -z "$(prep_pr "hotfix-prep/product-a/")"
+expect_run H2b "$(dispatch hotfix-release-prep.yml -f product=product-a)" success "release/product-a/v$AH を作りました"
+expect_merge H2c "$(prep_pr "hotfix-release-prep/product-a/")"
+expect_run H2d "$(dispatch hotfix-release-prep.yml -f product=product-a)" success "すでにあるので"
+ok_if H2e "running again creates no PR" test -z "$(prep_pr "hotfix-release-prep/product-a/")"
 expect_run H3 "$(dispatch release.yml --ref "release/product-a/v$AH" -f step=rc)" success "product-a/v$AH-rc.1 を"
 
 log "H4. Two release branches of the same product (product-a)"
 A=$(version_of product-a)
-expect_run H4 "$(dispatch release-prep.yml -f product=product-a -f bump=minor)" success "release/product-a/v$A を作りました"
-expect_merge H4b "$(prep_pr "release-prep/product-a/")"
+expect_run H4 "$(dispatch normal-release-prep.yml -f product=product-a -f bump=minor)" success "release/product-a/v$A を作りました"
+expect_merge H4b "$(prep_pr "normal-release-prep/product-a/")"
 H4M=$(make_pr h4-both main 'echo both-$T > ProductA/h4both.txt' "product-a/v$AH"); expect_merge H4c "$H4M"; wait_cherry_run "$H4M" >/dev/null
 P1=$(pr_for "cherry-pick-$H4M-to-release/product-a/v$AH"); P2=$(pr_for "cherry-pick-$H4M-to-release/product-a/v$A")
 ok_if H4d "an older label is cherry-picked to both release branches, each with its own version label" test "$(label_names "${P1:-0}" 2>/dev/null) $(label_names "${P2:-0}" 2>/dev/null)" = "product-a/v$AH product-a/v$A"
@@ -585,7 +585,7 @@ expect_run E8 "$(dispatch release.yml --ref "release/product-a/v$A" -f step=rele
 ok_if E8b "the release tag is at the branch head and no rc tag is created" sh -c "[ \"$(tag_commit "product-a/v$A")\" = \"$HEADA\" ] && ! git ls-remote --exit-code --tags origin 'refs/tags/product-a/v$A-rc.*' >/dev/null"
 ok_if E8c "release/product-a/v$A is deleted and label product-a/v$A is archived" sh -c "! git ls-remote --exit-code --heads origin release/product-a/v$A >/dev/null && [ -n \"$(archived_at "product-a/v$A")\" ]"
 
-log "H5. Hotfix prep from tags (product-b)"
+log "H5. Hotfix release prep from tags (product-b)"
 git fetch -q origin --tags
 BL=$(plus_patch "$B0" 5); BN=$(next_patch "$BL")
 INITIAL=$(git rev-list --max-parents=0 origin/main)
@@ -593,8 +593,8 @@ git switch -q -C reg-legacy "$INITIAL" && git rm -q -r VERSION .github && git co
 git tag -f -a -m "rc" "product-b/v$BL-rc.1" "$LEGACY" && git tag -f -a -m "release" "product-b/v$BL" "product-b/v$BL-rc.1" 2>/dev/null
 gpush origin "product-b/v$BL-rc.1" "product-b/v$BL" 2>/dev/null; git switch -q main; git branch -D reg-legacy -q
 # 自動化（.github）はタグのものを使うので、自動化を入れる前のタグからはブランチを作らない（そのブランチへの PR は必須チェックが動かない）
-expect_run H5c "$(dispatch hotfix-prep.yml -f product=product-b)" failure "今の自動化を入れる前のタグ"
-ok_if H5d "no release branch or bump PR is created from a tag without automation" sh -c "! git ls-remote --exit-code --heads origin release/product-b/v$BN >/dev/null && [ -z \"$(prep_pr "hotfix-prep/product-b/")\" ]"
+expect_run H5c "$(dispatch hotfix-release-prep.yml -f product=product-b)" failure "今の自動化を入れる前のタグ"
+ok_if H5d "no release branch or bump PR is created from a tag without automation" sh -c "! git ls-remote --exit-code --heads origin release/product-b/v$BN >/dev/null && [ -z \"$(prep_pr "hotfix-release-prep/product-b/")\" ]"
 # 偽の古いタグは、後のテストや手での確認に残さない
 gpush origin --delete "refs/tags/product-b/v$BL" 2>/dev/null
 gpush origin --delete "refs/tags/product-b/v$BL-rc.1" 2>/dev/null
@@ -656,8 +656,8 @@ gh api -X POST "repos/$R/rulesets" --input - >/dev/null 2>&1 <<EOF
 {"name":"$TEMP_RULESET_NAME","target":"branch","enforcement":"active","conditions":{"ref_name":{"include":["refs/heads/release/product-c/v$C"],"exclude":[]}},"bypass_actors":[],"rules":[{"type":"creation"}]}
 EOF
 if [ -z "$(temp_rulesets)" ]; then record NG RS8 "could not create the temporary ruleset"; else
-expect_run RS8 "$(dispatch release-prep.yml -f product=product-c -f bump=minor)" failure
-ok_if RS8b "nothing is created when the release branch cannot be created" sh -c "! git ls-remote --exit-code --heads origin release/product-c/v$C >/dev/null && [ -z \"\$(gh pr list --repo $R --state open --json headRefName --jq '.[] | select(.headRefName | startswith(\"release-prep/product-c/\")) | .headRefName')\" ]"
+expect_run RS8 "$(dispatch normal-release-prep.yml -f product=product-c -f bump=minor)" failure
+ok_if RS8b "nothing is created when the release branch cannot be created" sh -c "! git ls-remote --exit-code --heads origin release/product-c/v$C >/dev/null && [ -z \"\$(gh pr list --repo $R --state open --json headRefName --jq '.[] | select(.headRefName | startswith(\"normal-release-prep/product-c/\")) | .headRefName')\" ]"
 fi
 delete_temp_rulesets || echo "  (RS8: 一時的なルールセットを消せませんでした)"
 git fetch -q origin

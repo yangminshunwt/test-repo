@@ -1,6 +1,6 @@
 # 回帰テスト
 
-`regression.sh` は、このリポジトリの自動化（リリースラベルのチェック、CI、Cherry-Pick、Release Preparation、Hotfix Preparation、Tag Creation、ルールセット）のシナリオを、GitHub の上で実際に動かし、期待どおりかを 1 件ずつ判定する。前のシナリオの結果を次のシナリオが使うので、上から順にすべて流す（途中の節だけを流すことはできない）。
+`regression.sh` は、このリポジトリの自動化（リリースラベルのチェック、CI、Cherry-Pick、Normal Release Preparation、Hotfix Release Preparation、Tag Creation、ルールセット）のシナリオを、GitHub の上で実際に動かし、期待どおりかを 1 件ずつ判定する。前のシナリオの結果を次のシナリオが使うので、上から順にすべて流す（途中の節だけを流すことはできない）。
 
 ## 流す前に
 

@@ -11,9 +11,9 @@ const {
   findCherryPickTargets,
   parseCherryPickBranch,
   parseVersionFile,
-  planHotfixPrep,
+  planHotfixReleasePrep,
   planRelease,
-  planReleasePrep,
+  planNormalReleasePrep,
   setVersion,
 } = require('./rules.js');
 
@@ -302,14 +302,14 @@ test('cherry-pick：main で、VERSION を上げる前に作った同じバー�
 });
 
 test('リリース準備：main の今のバージョンのリリースブランチと、次のバージョンとそのラベルを決める', () => {
-  assert.deepEqual(planReleasePrep({ versionFile: versionFile('1.5.3', '1.4.0'), product: 'product-a', bump: 'minor' }), {
+  assert.deepEqual(planNormalReleasePrep({ versionFile: versionFile('1.5.3', '1.4.0'), product: 'product-a', bump: 'minor' }), {
     currentVersion: '1.5.3',
     nextVersion: '1.6.0',
     releaseBranch: 'release/product-a/v1.5.3',
     releaseTag: 'product-a/v1.5.3',
     nextLabel: 'product-a/v1.6.0',
   });
-  assert.equal(planReleasePrep({ versionFile: versionFile('1.5.3', '1.4.0'), product: 'product-a', bump: 'major' }).nextVersion, '2.0.0');
+  assert.equal(planNormalReleasePrep({ versionFile: versionFile('1.5.3', '1.4.0'), product: 'product-a', bump: 'major' }).nextVersion, '2.0.0');
 });
 
 test('リリース準備：VERSION ファイルのその製品の行だけを書き換える', () => {
@@ -319,7 +319,7 @@ test('リリース準備：VERSION ファイルのその製品の行だけを書
 
 test('修正フェーズ：最新のリリースタグから、次のパッチバージョンのリリースブランチを作る', () => {
   const tags = ['product-a/v1.2.0', 'product-a/v1.10.0-rc.1', 'product-a/v1.9.3', 'product-a/v1.10.0-rc.2', 'product-b/v2.0.0', 'product-a/v1.3.0'];
-  assert.deepEqual(planHotfixPrep({ product: 'product-a', tags }), {
+  assert.deepEqual(planHotfixReleasePrep({ product: 'product-a', tags }), {
     releasedTag: 'product-a/v1.9.3',
     releasedVersion: '1.9.3',
     nextVersion: '1.9.4',
@@ -329,7 +329,7 @@ test('修正フェーズ：最新のリリースタグから、次のパッチ�
 });
 
 test('修正フェーズ：リリースタグがまだない製品は NG', () => {
-  assert.match(planHotfixPrep({ product: 'product-b', tags: ['product-a/v1.0.0', 'product-b/v1.0.0-rc.1'] }).error, /リリースタグ/);
+  assert.match(planHotfixReleasePrep({ product: 'product-b', tags: ['product-a/v1.0.0', 'product-b/v1.0.0-rc.1'] }).error, /リリースタグ/);
 });
 
 test('リリース手順：rc タグは 1 から順に、リリースタグはブランチのバージョン', () => {

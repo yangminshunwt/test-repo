@@ -145,7 +145,7 @@ function checkReleaseLabels({ baseBranch, labels, affectedProducts, versionFile,
     } else if (!release && parseVersion(after)[2] !== 0) {
       errors.push(`VERSION の ${product} を ${after} にしています。main のバージョンは、パッチを 0 にしてください（マイナーかメジャーを上げる。パッチは修正フェーズで使います）。`);
     } else if (!release && !hasBranch(product, before)) {
-      errors.push(`VERSION の ${product} を上げる前に、release/${product}/v${before} を作ってください（Actions の「Release Preparation」を使うと順番どおりに進みます）。`);
+      errors.push(`VERSION の ${product} を上げる前に、release/${product}/v${before} を作ってください（Actions の「Normal Release Preparation」を使うと順番どおりに進みます）。`);
     }
     for (const { label, version } of labelsByProduct.get(product) ?? []) {
       if (version !== after) errors.push(`${label}：VERSION の ${product} を ${after} にする PR には、${product}/v${after} を付けてください。`);
@@ -192,7 +192,7 @@ function findCherryPickTargets(pull, branches) {
 
 // リリースの準備（開発ルールの「main ブランチにおいて機能の開発は終了しリリース前の準備フェーズに入りたい場合」）で、
 // main の今のバージョンから作るリリースブランチと、次のバージョン（bump は minor か major）とそのリリースラベルを決める。
-function planReleasePrep({ versionFile, product, bump }) {
+function planNormalReleasePrep({ versionFile, product, bump }) {
   const currentVersion = parseVersionFile(versionFile)[product];
   const [major, minor] = parseVersion(currentVersion);
   const nextVersion = bump === 'major' ? `${major + 1}.0.0` : `${major}.${minor + 1}.0`;
@@ -207,7 +207,7 @@ function planReleasePrep({ versionFile, product, bump }) {
 
 // 修正フェーズ（開発ルールの「リリース済みのバージョンに対しての修正フェーズに入りたい場合」）で、
 // 製品の最新のリリースタグ（<製品名>/vX.Y.Z。rc などは除く）と、そこから作るリリースブランチ（次のパッチバージョン）を決める。
-function planHotfixPrep({ product, tags }) {
+function planHotfixReleasePrep({ product, tags }) {
   const prefix = `${product}/v`;
   const released = tags.filter((tag) => tag.startsWith(prefix) && parseVersion(tag.slice(prefix.length))).map((tag) => tag.slice(prefix.length));
   if (released.length === 0) {
@@ -262,8 +262,8 @@ module.exports = {
   findCherryPickTargets,
   parseCherryPickBranch,
   parseVersionFile,
-  planHotfixPrep,
+  planHotfixReleasePrep,
   planRelease,
-  planReleasePrep,
+  planNormalReleasePrep,
   setVersion,
 };

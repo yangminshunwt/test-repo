@@ -36,7 +36,7 @@ async function createTag(github, repo, name, sha, message) {
 function mainNotBumped(plan) {
   const main = versionAt('origin/main', plan.product);
   if (main && compareVersions(main, plan.version) > 0) return null;
-  return `main の VERSION の ${plan.product} が ${main} のままです。先に main の VERSION を上げる PR（Release Preparation が作ったもの）をマージしてください。`;
+  return `main の VERSION の ${plan.product} が ${main} のままです。先に main の VERSION を上げる PR（Normal Release Preparation が作ったもの）をマージしてください。`;
 }
 
 // 手順 1：リリースブランチの先頭に、次の rc タグを打つ（このリリースに入るべき変更がすべて入っていることを確かめてから）。
@@ -132,8 +132,8 @@ async function release({ github, context, core }) {
   if (open.length > 0) problems.push(`${branch} に向けた開いている PR（${prList(open)}）は、このリリースに入っておらず、ブランチの削除で閉じられます。`);
   if (missing.length > 0) {
     problems.push(
-      `ラベルではこのリリースに入るはずなのに、入っていない変更があります（${prList(missing)}）。修正フェーズに入れるときは、Hotfix Preparation が製品の最新のリリースタグから` +
-        `修正フェーズのブランチを作り、main やより新しいリリースブランチにマージした変更を自動で cherry-pick します（このリリースより新しいリリースがあれば、このバージョンの修正フェーズは Hotfix Preparation では作れないので、管理者に作ってもらってください）。` +
+      `ラベルではこのリリースに入るはずなのに、入っていない変更があります（${prList(missing)}）。修正フェーズに入れるときは、Hotfix Release Preparation が製品の最新のリリースタグから` +
+        `修正フェーズのブランチを作り、main やより新しいリリースブランチにマージした変更を自動で cherry-pick します（このリリースより新しいリリースがあれば、このバージョンの修正フェーズは Hotfix Release Preparation では作れないので、管理者に作ってもらってください）。` +
         `${branch} に直接マージした変更は自動では入らないので、修正フェーズのブランチに PR を出し直してください。`,
     );
   }
