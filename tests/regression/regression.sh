@@ -152,6 +152,12 @@ expect_label() { # <ID> <PR> <pass|fail> [正規表現] [since]
     record NG "$id" "#$pr label check=$got (want $want${pattern:+ / $pattern})" "$(echo "$text" | oneline)"
   fi
 }
+# Release Label Recheck のやり直しは同じ実行（attempt が増える）なので、PR のチェックの結果が変わるのを待つ
+label_bucket() { # <PR> <pass|fail>：release label check がその結果になるまで待ち、最後の結果を出す
+  local b=""
+  for _ in $(seq 1 60); do b=$(gh pr checks "$1" --repo $R --json name,bucket --jq '.[] | select(.name == "release label check") | .bucket' 2>/dev/null); [ "$b" = "$2" ] && break; sleep 5; done
+  echo "$b"
+}
 merge_state() { # <PR>：mergeStateStatus（計算中の UNKNOWN が続くあいだは待つ）
   local st=""
   for _ in $(seq 1 12); do st=$(gh pr view "$1" --repo $R --json mergeStateStatus --jq .mergeStateStatus 2>/dev/null); [ -n "$st" ] && [ "$st" != UNKNOWN ] && break; sleep 5; done
@@ -288,7 +294,11 @@ ok_if R3e "the VERSION bump PR is created by the App and has no release label" t
 expect_run R2c "$(dispatch normal-release-prep.yml --ref "$RA" -f product=product-a -f bump=minor)" failure "main ブランチで実行してください"
 expect_run R2d "$(dispatch hotfix-release-prep.yml --ref "$RA" -f product=product-a)" failure "main ブランチで実行してください"
 expect_run R5 "$(dispatch release.yml --ref "$RA" -f step=rc)" failure "main の VERSION の product-a が $A0 のまま"
+# main の VERSION が上がると、そのバージョンのラベルが付いた PR のチェックを Release Label Recheck がやり直す（push の道。リリースブランチの作成・削除は RL 節）
+RV=$(make_pr rv-next main 'echo rv-$T > ProductA/rv.txt' "product-a/v$(next_minor "$A0")"); expect_label RV1 "$RV" fail "より新しいバージョンです"
 expect_merge R6 "$PA"
+ok_if RV2 "merging the VERSION bump re-runs the check of #$RV and it passes" test "$(label_bucket "$RV" pass)" = pass
+gh pr close "$RV" --repo $R --delete-branch >/dev/null 2>&1
 # 準備するバージョンは Run workflow を押した時点の main で決まるので、VERSION を上げたあとに Re-run しても次のバージョンの準備は始まらない
 gh run rerun "$RUN" --repo $R >/dev/null; sleep 10; wait_run_done "$RUN"; sleep 3
 expect_run R6b "$RUN" success "$RA はすでにあるので"
@@ -377,12 +387,7 @@ for n in $CI1 $CI2; do gh pr close "$n" --repo $R --delete-branch >/dev/null 2>&
 
 # =====================================================================
 log "RL. Rechecking labels when release branches or VERSION change"
-# 実行のやり直しは同じ実行（attempt が増える）なので、PR のチェックの結果が変わるのを待つ
-label_bucket() { # <PR> <pass|fail>：release label check がその結果になるまで待ち、最後の結果を出す
-  local b=""
-  for _ in $(seq 1 60); do b=$(gh pr checks "$1" --repo $R --json name,bucket --jq '.[] | select(.name == "release label check") | .bucket' 2>/dev/null); [ "$b" = "$2" ] && break; sleep 5; done
-  echo "$b"
-}
+# VERSION の push でのやり直しは、VERSION を上げる R6 のところ（RV1・RV2）で確かめる
 RLV=$(echo "$(version_of product-a)" | awk -F. '{print $1"."$2-1".9"}')
 gh label create "product-a/v$RLV" --repo $R --color 1d76db --description "Release label" >/dev/null 2>&1
 RL=$(make_pr rl-recheck main 'echo rl-$T > ProductA/rl.txt' "product-a/v$RLV"); expect_label RL1 "$RL" fail "v$RLV のリリースブランチがありません"
