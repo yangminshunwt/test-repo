@@ -1,10 +1,10 @@
 // リリースに入るべき変更と、それがコミットに入っているかの判断。
 // Tag Creation、Cherry-Pick、Release Preparation、Hotfix Preparation が、この同じ定義を使う。
-// 入るべきかは release-labels.js の belongsTo（開発ルールの「リリースラベル」）。git は、すべての履歴を取った作業場所で動かす。
+// 入るべきかは rules.js の belongsTo（開発ルールの「リリースラベル」）。git は、すべての履歴を取った作業場所で動かす。
 'use strict';
 
 const { git, prList, report } = require('./github-helpers.js');
-const { belongsTo, parseCherryPickBranch } = require('./release-labels.js');
+const { belongsTo, parseCherryPickBranch } = require('./rules.js');
 
 // マージされた PR をすべて、{ number, base, head, mergeCommit, labels } で返す。
 // 作成日時（変わらない）の順にページを送るので、取っている間に PR が更新されても、取りこぼしも重複もない

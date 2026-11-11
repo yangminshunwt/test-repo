@@ -42,8 +42,8 @@ jobs:
       - id: app-token
         uses: actions/create-github-app-token@v3
         with:
-          client-id: ${{ vars.CHERRY_PICK_APP_CLIENT_ID }}
-          private-key: ${{ secrets.CHERRY_PICK_APP_PRIVATE_KEY }}
+          client-id: ${{ vars.AUTOMATION_APP_CLIENT_ID }}
+          private-key: ${{ secrets.AUTOMATION_APP_PRIVATE_KEY }}
           permission-contents: write
           permission-issues: write # リリースラベルを作る
           permission-pull-requests: write

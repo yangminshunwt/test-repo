@@ -3,7 +3,7 @@
 
 const { containsChange, listMergedPulls } = require('./changes.js');
 const { branchHead, deleteBranchIfAt, localReleaseBranches } = require('./github-helpers.js');
-const { cherryPickBranch, findCherryPickTargets } = require('./release-labels.js');
+const { cherryPickBranch, findCherryPickTargets } = require('./rules.js');
 
 // backport-action が cherry-pick のコミットに使う committer（action.yml の git_committer_email の既定）
 const AUTOMATION_COMMITTER = 'github-actions[bot]@users.noreply.github.com';
@@ -92,7 +92,7 @@ async function reportFailures({ github, context, core }) {
   const env = process.env;
   const reasons = [];
   if (env.APP_TOKEN_OUTCOME === 'failure') {
-    reasons.push('GitHub App のトークンを作れませんでした。App とリポジトリの設定（CHERRY_PICK_APP_CLIENT_ID・CHERRY_PICK_APP_PRIVATE_KEY）を確かめてください。');
+    reasons.push('GitHub App のトークンを作れませんでした。App とリポジトリの設定（AUTOMATION_APP_CLIENT_ID・AUTOMATION_APP_PRIVATE_KEY）を確かめてください。');
   } else if (env.JOB_STATUS === 'failure') {
     reasons.push('途中のステップが失敗しました。実行の記録を確かめてください。');
   }
