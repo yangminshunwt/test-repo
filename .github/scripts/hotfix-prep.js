@@ -5,7 +5,7 @@
 const fs = require('fs');
 const path = require('path');
 const { branchHead, createReleaseBranch, createReleaseLabel, git, report } = require('./github-helpers.js');
-const { planHotfixPrep, setVersion } = require('./release-labels.js');
+const { planHotfixPrep, setVersion } = require('./rules.js');
 
 // 最新のリリースタグから次のパッチバージョンのリリースブランチを作り、そのリリースラベルを作る。
 // すでにできているものはそのまま使うので、Re-run すると続きから進む。

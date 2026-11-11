@@ -5,7 +5,7 @@
 'use strict';
 
 const { git, localReleaseBranches } = require('./github-helpers.js');
-const { checkReleaseLabels, findAffectedProducts, parseVersionFile } = require('./release-labels.js');
+const { checkReleaseLabels, findAffectedProducts, parseVersionFile } = require('./rules.js');
 
 // PR の今のマージ先とラベル（イベントの後に変わっていても今の状態で判定するため、API で取り直す）と、
 // PR の先頭とマージ先との分かれ目（paths-filter が変更を探す起点）を出力する。

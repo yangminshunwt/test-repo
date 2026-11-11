@@ -15,7 +15,7 @@ const {
   planRelease,
   planReleasePrep,
   setVersion,
-} = require('./release-labels.js');
+} = require('./rules.js');
 
 const HEADER = '# Holds the version under development on this branch.\n#\n#    product-name/X.Y.Z\n#---\n\n';
 

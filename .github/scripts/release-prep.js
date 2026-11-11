@@ -4,7 +4,7 @@
 
 const fs = require('fs');
 const { createReleaseBranch, createReleaseLabel, git, report } = require('./github-helpers.js');
-const { parseVersionFile, planReleasePrep, setVersion } = require('./release-labels.js');
+const { parseVersionFile, planReleasePrep, setVersion } = require('./rules.js');
 
 // 準備するバージョンは、実行を始めた時点（Run workflow を押した時点。Re-run でも同じ）の main の VERSION で決め、
 // リリースブランチもその時点の main から作る。VERSION を上げる PR は今の main に作る（ほかの製品の VERSION を戻さないため）。

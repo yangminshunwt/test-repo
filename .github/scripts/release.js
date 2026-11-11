@@ -6,7 +6,7 @@
 
 const { listMergedPulls, missingChanges } = require('./changes.js');
 const { deleteBranchIfAt, git, prList, report } = require('./github-helpers.js');
-const { compareVersions, parseVersionFile, planRelease } = require('./release-labels.js');
+const { compareVersions, parseVersionFile, planRelease } = require('./rules.js');
 
 const commitOf = (ref) => git('rev-parse', `${ref}^{commit}`);
 

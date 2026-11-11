@@ -58,8 +58,8 @@ jobs:
         if: steps.select.outputs.targets != ''
         uses: actions/create-github-app-token@v3
         with:
-          client-id: ${{ vars.CHERRY_PICK_APP_CLIENT_ID }}
-          private-key: ${{ secrets.CHERRY_PICK_APP_PRIVATE_KEY }}
+          client-id: ${{ vars.AUTOMATION_APP_CLIENT_ID }}
+          private-key: ${{ secrets.AUTOMATION_APP_PRIVATE_KEY }}
           permission-contents: write
           permission-issues: write
           permission-pull-requests: write
@@ -81,7 +81,7 @@ jobs:
           source_pr_number: ${{ env.PR_NUMBER }}
           target_branches: ${{ steps.select.outputs.branches }}
           label_pattern: '' # 行き先は select で決めたものだけにする
-          branch_name: cherry-pick-${pull_number}-to-${target_branch} # release-labels.js の cherryPickBranch・parseCherryPickBranch と同じ形
+          branch_name: cherry-pick-${pull_number}-to-${target_branch} # rules.js の cherryPickBranch・parseCherryPickBranch と同じ形
           # ${...} は、タイトルと本文のそれぞれで最初の 1 か所しか置き換わらないので、同じものを 2 回書かない
           pull_title: '🍒 [#${pull_number} → ${target_branch}] ${pull_title}'
           pull_description: |-
