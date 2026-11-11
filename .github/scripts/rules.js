@@ -102,8 +102,13 @@ function checkReleaseLabels({ baseBranch, labels, affectedProducts, versionFile,
   if (baseBranch === 'main') {
     requiredProducts = affectedProducts;
   } else {
-    // ワークフローは main と release/** への PR でだけ動き、release/** は自動化（と管理者）だけが release/<製品名>/vX.Y.Z の形で作る
+    // ワークフローは main と release/** への PR で動くが、マージ先がそのどちらでもない PR でも動くことがある
+    // （GitHub のスタックした PR は、スタックのいちばん下のマージ先で動く。release/ で始まる、リリースブランチではないブランチもありうる）。
+    // ここでの決まりは main とリリースブランチ（release/<製品名>/vX.Y.Z）へのマージのためのものなので、ほかのマージ先は通さない
     release = parseReleaseBranch(baseBranch);
+    if (!release) {
+      return { errors: [`マージ先のブランチ（${baseBranch}）が、main でも、リリースブランチ（release/<製品名>/vX.Y.Z）でもありません。`] };
+    }
     requiredProducts = [release.product];
     for (const { label, product } of releaseLabels) {
       if (product !== release.product) {

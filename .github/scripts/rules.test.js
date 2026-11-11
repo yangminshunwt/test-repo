@@ -197,6 +197,14 @@ test('リリースブランチ：その製品のラベルがなければ NG', ()
   );
 });
 
+test('マージ先が main でもリリースブランチでもなければ NG（スタックした PR の上の PR など）', () => {
+  for (const baseBranch of ['stack-a', 'release/webview']) {
+    assert.deepEqual(check({ baseBranch, labels: ['product-a/v1.5.0'] }).errors, [
+      `マージ先のブランチ（${baseBranch}）が、main でも、リリースブランチ（release/<製品名>/vX.Y.Z）でもありません。`,
+    ]);
+  }
+});
+
 test('リリースブランチ：ブランチより新しいラベルは NG', () => {
   assertError(
     check({ baseBranch: 'release/product-a/v1.4.0', version: versionFile('1.4.0', '1.4.0'), labels: ['product-a/v1.5.0'] }),
