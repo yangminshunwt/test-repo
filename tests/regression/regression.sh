@@ -5,6 +5,7 @@ set -u
 export LC_ALL=C # bash 3.2 は変数の直後の全角文字を変数名として読むことがあるため
 R=yangminshunwt/test-repo
 APP=app/yang-minshun-s-cherry-pick-app # 自動化の GitHub App（cherry-pick の PR などを作る）
+APP_ENV=automation-app # App の変数と秘密を置いている Environment
 HERE=$(cd "$(dirname "$0")" && pwd)
 RESULTS=$HERE/regression-results.txt # git には入れない（.gitignore）
 TMP=$(mktemp -d)
@@ -64,8 +65,8 @@ CLIENT_ID=""
 CLIENT_ID_CHANGED=""
 set_client_id() { # <値>：変えて、変わったことを確かめる
   for _ in 1 2 3 4 5; do
-    gh variable set AUTOMATION_APP_CLIENT_ID --repo $R --body "$1" >/dev/null 2>&1
-    [ "$(gh variable get AUTOMATION_APP_CLIENT_ID --repo $R 2>/dev/null)" = "$1" ] && return 0
+    gh variable set AUTOMATION_APP_CLIENT_ID --env "$APP_ENV" --repo $R --body "$1" >/dev/null 2>&1
+    [ "$(gh variable get AUTOMATION_APP_CLIENT_ID --env "$APP_ENV" --repo $R 2>/dev/null)" = "$1" ] && return 0
     sleep 10
   done
   return 1
@@ -242,7 +243,7 @@ author_of() { gh pr view "$1" --repo $R --json author --jq .author.login; }
 
 # =====================================================================
 log "S. cleanup"
-CLIENT_ID=$(retry gh variable get AUTOMATION_APP_CLIENT_ID --repo $R 2>/dev/null)
+CLIENT_ID=$(retry gh variable get AUTOMATION_APP_CLIENT_ID --env "$APP_ENV" --repo $R 2>/dev/null)
 if [ -z "$CLIENT_ID" ] || [ "$CLIENT_ID" = "$INVALID_CLIENT_ID" ]; then echo "!! AUTOMATION_APP_CLIENT_ID が正しくありません（$CLIENT_ID）。直してから流してください。"; exit 1; fi
 set_merge_commit false
 delete_temp_rulesets
@@ -438,7 +439,7 @@ gpush origin --delete "reg/l1-none" 2>/dev/null # C6 のために残していた
 CLIENT_ID_CHANGED=1; set_client_id "$INVALID_CLIENT_ID" || echo "  (C7: Client ID を変えられませんでした)"
 C7=$(make_pr c7-rerun main 'echo c7-$T > ProductC/c7.txt' "product-c/v$C0"); expect_merge C7 "$C7"; RUN=$(wait_cherry_run "$C7")
 set_client_id "$CLIENT_ID" && CLIENT_ID_CHANGED=""
-ok_if C7a "the Client ID is restored" test "$(gh variable get AUTOMATION_APP_CLIENT_ID --repo $R)" = "$CLIENT_ID"
+ok_if C7a "the Client ID is restored" test "$(gh variable get AUTOMATION_APP_CLIENT_ID --env "$APP_ENV" --repo $R)" = "$CLIENT_ID"
 expect_run C7b "$RUN" failure
 ok_if C7c "the failure is reported with an @ mention" test "$(comments_matching "$C7" "@$ME cherry-pick を終えられませんでした")" -ge 1
 gh run rerun "$RUN" --repo $R --failed >/dev/null; sleep 10; wait_run_done "$RUN"; sleep 5
