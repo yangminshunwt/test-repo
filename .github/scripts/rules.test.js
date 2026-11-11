@@ -10,6 +10,7 @@ const {
   findAffectedProducts,
   findCherryPickTargets,
   parseCherryPickBranch,
+  parseMergeQueueBranch,
   parseVersionFile,
   planHotfixReleasePrep,
   planRelease,
@@ -58,6 +59,15 @@ test('cherry-pick の PR のブランチ名を作り、元の PR の番号を読
   assert.equal(parseCherryPickBranch(cherryPickBranch(12, 'release/product-a/v1.4.0')), 12);
   assert.equal(parseCherryPickBranch('feature/cherry-pick-12-to-x'), null);
   assert.equal(parseCherryPickBranch('cherry-pick-fix'), null);
+});
+
+test('マージキューのブランチから PR の番号を読む', () => {
+  const sha = '0123456789abcdef0123456789abcdef01234567';
+  assert.equal(parseMergeQueueBranch(`refs/heads/gh-readonly-queue/main/pr-104-${sha}`), 104);
+  assert.equal(parseMergeQueueBranch(`gh-readonly-queue/main/pr-104-${sha}`), 104);
+  assert.equal(parseMergeQueueBranch(`refs/heads/gh-readonly-queue/release/product-a/v1.4.0/pr-7-${sha}`), 7);
+  assert.equal(parseMergeQueueBranch('refs/heads/main'), null);
+  assert.equal(parseMergeQueueBranch(`refs/heads/feature/pr-104-${sha}`), null);
 });
 
 test('バージョンを数値として比べる', () => {
