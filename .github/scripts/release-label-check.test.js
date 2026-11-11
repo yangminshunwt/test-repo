@@ -1,7 +1,7 @@
 'use strict';
 
 // release-label-check.js の findBase と check を、マージキューのマージグループを模した一時的な git リポジトリで確かめる
-// （このリポジトリは個人のものでマージキューを使えないので、merge_group のイベントはここでしか確かめられない）。
+// （merge_group のイベントは、マージキューに PR を入れないと起きないので、ここでマージグループの形を作って確かめる）。
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { execFileSync } = require('child_process');
