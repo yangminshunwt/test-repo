@@ -14,10 +14,8 @@ test('prepare は現在のラベルとブランチから行き先と付けるラ
     rest: {
       pulls: { get: async () => ({ data: source }) },
       repos: { listBranches() {} },
-      issues: { listLabelsOnIssue() {} },
     },
     paginate: async (method: unknown) => {
-      if (method === github.rest.issues.listLabelsOnIssue) return source.labels;
       assert.equal(method, github.rest.repos.listBranches);
       return [
         'main', 'feature', 'release/invalid', 'release/product-a/v1.2.9', 'release/product-b/v2.0.0',
@@ -58,9 +56,8 @@ async function targets({ base = 'main', head = 'feature', labels, branches = BRA
     rest: {
       pulls: { get: async () => ({ data: { number: 10, merged: true, base: { ref: base }, head: { ref: head }, labels: labels.map((name) => ({ name })) } }) },
       repos: { listBranches() {} },
-      issues: { listLabelsOnIssue() {} },
     },
-    paginate: async (method: unknown) => (method === github.rest.repos.listBranches ? branches : labels).map((name) => ({ name })),
+    paginate: async () => branches.map((name) => ({ name })),
   });
   let output = '';
   await prepare({

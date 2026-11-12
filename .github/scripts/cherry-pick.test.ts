@@ -3,7 +3,7 @@ import { prepare } from './cherry-pick/workflow.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-test('行き先がなければ、ラベルのアーカイブ状態は取得しない', async () => {
+test('行き先がなければ、付けるラベルは出力しない', async () => {
   const github = mockGitHub({
     rest: {
       pulls: { get: async () => ({ data: { number: 10, merged: true, base: { ref: 'main' }, labels: [{ name: 'product-a/v1.3.0' }] } }) },
@@ -20,7 +20,7 @@ test('行き先がなければ、ラベルのアーカイブ状態は取得し�
   assert.deepEqual(Object.fromEntries(outputs), { targets: '' });
 });
 
-test('prepare は全製品の未アーカイブラベルと cherry-pick を action に渡す', async () => {
+test('prepare は PR の全製品の未アーカイブラベルと cherry-pick を action に渡す', async () => {
   const repo = { owner: 'o', repo: 'r' };
   const labels = [
     { name: 'product-a/v1.3.0', archived_at: '2026-11-12T00:00:00Z' },
@@ -34,13 +34,10 @@ test('prepare は全製品の未アーカイブラベルと cherry-pick を acti
     rest: {
       pulls: { get: async () => ({ data: { number: 10, merged: true, base: { ref: 'main' }, labels } }) },
       repos: { listBranches() {} },
-      issues: { listLabelsOnIssue() {} },
     },
-    paginate: async (method: unknown, args: unknown) => {
-      if (method === github.rest.repos.listBranches) return [{ name: 'release/product-a/v1.3.1' }];
-      assert.equal(method, github.rest.issues.listLabelsOnIssue);
-      assert.deepEqual(args, { ...repo, issue_number: 10, per_page: 100 });
-      return labels;
+    paginate: async (method: unknown) => {
+      assert.equal(method, github.rest.repos.listBranches);
+      return [{ name: 'release/product-a/v1.3.1' }];
     },
   });
   const outputs = new Map<string, unknown>();
