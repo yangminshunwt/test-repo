@@ -82,8 +82,7 @@ function missingChanges(pulls: MergedPullRequest[], product: string, version: st
 
 // normal-release-prep.yml から呼ぶ。リリースブランチ（RELEASE_BRANCH。チェックアウトしたときの先頭が BRANCH_SHA）に
 // 入るべきなのに入っていない変更の Cherry-Pick を、PR ごとに実行する。ブランチを作る前に Cherry-Pick が動いた PR
-// （作る間にマージされた PR）のため。Cherry-Pick の作業ブランチがすでにあるときは、
-// Cherry-Pick 側でエラーになるので、既存のブランチを確認する。
+// （作る間にマージされた PR）のため。
 async function catchUp({ github, context, core }: WorkflowInput): Promise<void> {
   const env = process.env;
   const repo = context.repo;

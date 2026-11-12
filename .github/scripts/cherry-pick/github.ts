@@ -1,4 +1,3 @@
-import type * as core from '@actions/core';
 import type { GitHub, Repository } from '../github.ts';
 import { cherryPickBranch } from '../rules.ts';
 
@@ -7,8 +6,6 @@ export interface PullRequestInput {
   repo: Repository;
   prNumber: number;
 }
-
-export type Logger = Pick<typeof core, 'info'>;
 
 // ラベルを設定するため、元の PR と行き先に対応する開いている PR を探す。
 export function listCherryPickPulls(
