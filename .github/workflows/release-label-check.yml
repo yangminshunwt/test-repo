@@ -22,18 +22,11 @@ jobs:
     if: github.event_name == 'merge_group' || !github.event.pull_request.merged
     runs-on: ubuntu-latest
     steps:
-      # 差分・VERSION・リリースブランチの判定用に、PR の先頭と全履歴を取得する。
+      # 再実行でも現在のテスト用マージコミットを取る。キューではイベントの合成済みコミットを使う。
       - uses: actions/checkout@v7
         with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ github.event_name == 'merge_group' && github.sha || format('refs/pull/{0}/merge', github.event.pull_request.number) }}
           fetch-depth: 0
-          persist-credentials: false
-
-      # スクリプトとパス設定は、実行中のワークフローと同じコミットから取得する。
-      - uses: actions/checkout@v7
-        with:
-          path: .automation
-          sparse-checkout: .github/scripts
           persist-credentials: false
 
       - id: base
@@ -42,15 +35,15 @@ jobs:
         with:
           retries: 3 # GitHub API の一時的なエラー（5xx）はやり直す
           script: |
-            const { findBase } = require('./.automation/.github/scripts/release-label-check.ts')
-            await findBase({ github, context, core })
+            const { findBase } = require('./.github/scripts/release-label-check.ts')
+            await findBase({ github, context, core, mergedCheckout: true })
 
       # token を空にして、ファイル数制限のある API ではなく git で差分を取る。
       - id: products
         name: Find affected products
         uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
         with:
-          filters: .automation/.github/product-paths.yml
+          filters: .github/product-paths.yml
           base: ${{ steps.base.outputs.base_sha }}
           token: ''
 
@@ -61,9 +54,8 @@ jobs:
           BEFORE: ${{ steps.base.outputs.before }}
           LABELS: ${{ steps.base.outputs.labels }}
           AFFECTED_PRODUCTS: ${{ steps.products.outputs.changes }}
-          ALL_FILE_COUNT: ${{ steps.products.outputs.all_count }}
-          LISTED_FILE_COUNT: ${{ steps.products.outputs.listed_count }}
+          HAS_UNLISTED_FILES: ${{ fromJSON(steps.products.outputs.all_count) > fromJSON(steps.products.outputs.listed_count) }}
         with:
           script: |
-            const { check } = require('./.automation/.github/scripts/release-label-check.ts')
-            await check({ core })
+            const { check } = require('./.github/scripts/release-label-check.ts')
+            check({ core })

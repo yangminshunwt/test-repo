@@ -267,15 +267,14 @@ test('影響する製品：paths-filter が当てたフィルタのうち、VERS
   const result = findAffectedProducts({
     matched: ['product-a', 'product-b', 'listed', 'all'],
     products: PRODUCTS,
-    allFileCount: 1,
-    listedFileCount: 1,
+    hasUnlistedFiles: false,
   });
   assert.deepEqual(result.products, ['product-a', 'product-b']);
   assert.equal(result.reason, null);
 });
 
 test('影響する製品：パス設定に書かれていないファイルがあれば、すべての製品に影響するとみなす', () => {
-  const result = findAffectedProducts({ matched: ['product-a', 'listed', 'all'], products: PRODUCTS, allFileCount: 2, listedFileCount: 1 });
+  const result = findAffectedProducts({ matched: ['product-a', 'listed', 'all'], products: PRODUCTS, hasUnlistedFiles: true });
   assert.deepEqual(result.products, PRODUCTS);
   assert.match(result.reason!, /書かれていないパス/);
 });

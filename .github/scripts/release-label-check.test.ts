@@ -1,7 +1,6 @@
 import { mockCore, mockContext, mockGitHub } from './test-helpers.ts';
 import type { Context } from './github.ts';
-// release-label-check.ts の findBase と check を、マージキューのマージグループを模した一時的な git リポジトリで確かめる
-// （merge_group のイベントは、マージキューに PR を入れないと起きないので、ここでマージグループの形を作って確かめる）。
+// PR のテスト用マージコミットとキューの合成済みコミットを、一時的な git リポジトリで確かめる。
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
@@ -21,6 +20,11 @@ function commit(parent: string | null, files: Record<string, string>, message: s
   }
   git('add', '-A');
   git('commit', '-q', '-m', message);
+  return git('rev-parse', 'HEAD');
+}
+function merge(base: string, head: string) {
+  git('checkout', '-q', '--detach', base);
+  git('merge', '--no-ff', '-q', '-m', 'Test merge', head);
   return git('rev-parse', 'HEAD');
 }
 const versionFile = (a: string) => `# version\nproduct-a/${a}\nproduct-b/2.0.0\n`;
@@ -50,31 +54,29 @@ test.after(() => {
 function fakeCore() {
   const outputs: Record<string, unknown> = {};
   const failures: string[] = [];
-  const summary = { addHeading: () => summary, addTable: () => summary, addList: () => summary, write: async () => summary };
-  return mockCore({ outputs, failures, summary, setOutput: (name: string, value: unknown) => (outputs[name] = value), setFailed: (message: string | Error) => failures.push(String(message)), warning() {}, error() {} });
+  return mockCore({ outputs, failures, setOutput: (name: string, value: unknown) => (outputs[name] = value), setFailed: (message: string | Error) => failures.push(String(message)), warning() {}, error() {} });
 }
-// number の PR（マージ先は main、ラベルは labels）だけを返す API
-const fakeGithub = (number: number, labels: string[]) => mockGitHub({
+// number の PR だけを返す API
+const fakeGithub = (number: number, labels: string[], base = 'main') => mockGitHub({
   rest: {
     pulls: {
       get: async ({ pull_number }: { pull_number: number }) => {
         assert.equal(pull_number, number);
-        return { data: { number, base: { ref: 'main' }, labels: labels.map((name) => ({ name })) } };
+        return { data: { number, base: { ref: base }, labels: labels.map((name) => ({ name })) } };
       },
     },
   },
 });
 const context = (payload: Context['payload']) => mockContext({ repo: { owner: 'o', repo: 'r' }, payload });
 
-async function runCheck(before: string, labels: string[]) {
+async function runCheck(before: string, labels: string[], baseBranch = 'main') {
   const core = fakeCore();
   Object.assign(process.env, {
-    BASE_REF: 'main',
+    BASE_REF: baseBranch,
     BEFORE: before,
     LABELS: JSON.stringify(labels),
-    AFFECTED_PRODUCTS: JSON.stringify(['product-a']), // paths-filter が group11..group12 から見つける製品
-    ALL_FILE_COUNT: '1',
-    LISTED_FILE_COUNT: '1',
+    AFFECTED_PRODUCTS: JSON.stringify(['product-a']),
+    HAS_UNLISTED_FILES: 'false',
   });
   await check({ core });
   return core.failures;
@@ -82,9 +84,11 @@ async function runCheck(before: string, labels: string[]) {
 
 test('マージキュー：PR の番号はブランチ名から、マージ前の中身はマージグループの親から取る', async () => {
   git('checkout', '-q', '--detach', group12);
-  const core = fakeCore();
-  await findBase({ github: fakeGithub(12, ['product-a/v1.4.0']), context: context({ merge_group: mergeGroup12 }), core });
-  assert.deepEqual(core.outputs, { base_ref: 'main', before: group11, base_sha: group11, labels: JSON.stringify(['product-a/v1.4.0']) });
+  for (const mergedCheckout of [false, true]) {
+    const core = fakeCore();
+    await findBase({ github: fakeGithub(12, ['product-a/v1.4.0']), context: context({ merge_group: mergeGroup12 }), core, mergedCheckout });
+    assert.deepEqual(core.outputs, { base_ref: 'main', before: group11, base_sha: group11, labels: JSON.stringify(['product-a/v1.4.0']) });
+  }
 });
 
 test('マージキュー：前に並んでいる PR の変更（VERSION を上げる）を、この PR の変更とみなさない', async () => {
@@ -95,7 +99,7 @@ test('マージキュー：前に並んでいる PR の変更（VERSION を上�
   assert.equal((await runCheck(root, ['product-a/v1.4.0'])).length, 1);
 });
 
-test('pull_request：マージ前の中身は今のマージ先の先頭、変更を探す起点はそれとの分かれ目', async () => {
+test('CI：マージ前の中身は今のマージ先の先頭、変更を探す起点はそれとの分かれ目', async () => {
   const head = commit(root, { 'ProductB/app.txt': 'b fix\n' }, 'Fix product-b');
   git('update-ref', 'refs/remotes/origin/main', group11); // PR を作ったあとで main が進んだ
   const core = fakeCore();
@@ -103,4 +107,49 @@ test('pull_request：マージ前の中身は今のマージ先の先頭、変�
   assert.deepEqual(core.outputs, { base_ref: 'main', before: group11, base_sha: root, labels: JSON.stringify(['product-b/v2.0.0']) });
   git('update-ref', 'refs/remotes/origin/main', root);
   assert.equal(git('rev-parse', 'HEAD'), head);
+});
+
+test('PR のマージ結果：main 側の VERSION 更新を PR の変更に含めない', async () => {
+  const head = commit(root, { 'ProductA/app.txt': 'a fix\n' }, 'Fix product-a');
+  const merged = merge(group11, head);
+  const laterMain = commit(group11, { VERSION: versionFile('1.6.0') }, 'Advance main after test merge');
+  git('update-ref', 'refs/remotes/origin/main', laterMain);
+  git('checkout', '-q', '--detach', merged);
+
+  const core = fakeCore();
+  await findBase({ github: fakeGithub(14, ['product-a/v1.4.0']), context: context({ pull_request: { number: 14 } }), core, mergedCheckout: true });
+  assert.deepEqual(core.outputs, { base_ref: 'main', before: group11, base_sha: group11, labels: JSON.stringify(['product-a/v1.4.0']) });
+  assert.equal(git('diff', '--name-only', `${core.outputs.base_sha}..HEAD`), 'ProductA/app.txt');
+  assert.deepEqual(await runCheck(String(core.outputs.before), ['product-a/v1.4.0']), []);
+  assert.equal((await runCheck(String(core.outputs.before), ['product-a/v1.6.0'])).length, 1);
+  git('update-ref', 'refs/remotes/origin/main', root);
+});
+
+test('PR のマージ結果：PR 自身の VERSION 更新には更新後のラベルが必要', async () => {
+  const head = commit(root, { VERSION: versionFile('1.5.0'), 'ProductA/app.txt': 'a next version\n' }, 'Update product-a and VERSION');
+  merge(root, head);
+  assert.deepEqual(await runCheck(root, ['product-a/v1.5.0']), []);
+  assert.equal((await runCheck(root, ['product-a/v1.4.0'])).length, 1);
+});
+
+test('リリース PR の再確認：新しいテスト用マージコミットの VERSION を使う', async () => {
+  const baseBranch = 'release/product-a/v1.4.1';
+  const labels = ['product-a/v1.4.1'];
+  const head = commit(root, { 'ProductA/app.txt': 'a hotfix\n' }, 'Fix product-a for hotfix');
+  merge(root, head);
+  assert.equal((await runCheck(root, labels, baseBranch)).length, 1);
+
+  const updatedBase = commit(root, { VERSION: versionFile('1.4.1') }, 'Prepare hotfix VERSION');
+  git('update-ref', `refs/remotes/origin/${baseBranch}`, updatedBase);
+  merge(updatedBase, head);
+  const core = fakeCore();
+  await findBase({
+    github: fakeGithub(15, labels, baseBranch),
+    context: context({ pull_request: { number: 15, base: { sha: root, ref: baseBranch } } }),
+    core,
+    mergedCheckout: true,
+  });
+  assert.equal(core.outputs.before, updatedBase);
+  assert.equal(git('diff', '--name-only', `${core.outputs.base_sha}..HEAD`), 'ProductA/app.txt');
+  assert.deepEqual(await runCheck(String(core.outputs.before), labels, baseBranch), []);
 });

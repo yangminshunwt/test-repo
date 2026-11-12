@@ -82,8 +82,8 @@ function parseMergeQueueBranch(ref: string): number | null {
 
 // 変更が影響する製品を、paths-filter が当てたフィルタの名前から決める。
 // 製品のパス設定に書かれていないファイル（all に当たって listed に当たらないもの）があれば、すべての製品に影響するとみなす。
-function findAffectedProducts({ matched, products, allFileCount, listedFileCount }: { matched: string[]; products: string[]; allFileCount: number; listedFileCount: number }) {
-  if (allFileCount > listedFileCount) {
+function findAffectedProducts({ matched, products, hasUnlistedFiles }: { matched: string[]; products: string[]; hasUnlistedFiles: boolean }) {
+  if (hasUnlistedFiles) {
     return {
       products: [...products],
       reason: '.github/product-paths.yml に書かれていないパスの変更があるため、すべての製品に影響するとみなしました。そのパスを使う製品に書き足してください。',

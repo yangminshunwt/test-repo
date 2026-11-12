@@ -20,10 +20,10 @@
 
 - 製品名の元は VERSION（1 行 1 製品で `product-name/X.Y.Z`）。
 - 変更が影響する製品は、`.github/product-paths.yml` のパスで決める。複数の製品で使うパスは、使う製品すべてに書く。どこにも書かれていないパスの変更は、すべての製品に影響するとみなす。`none` に書いたパス（VERSION、docs、.github など）は、どの製品にも影響しない（`ci.yml` を変えたときは、CI がすべての製品のテストを動かす）。ファイルの移動は、移動元と移動先の両方の変更として数える。
-- 必須チェックは `release label check` と `ci` で、どちらも PR の先頭（マージキューでは、マージグループのコミット）を確かめる（前提は `.github/rulesets/README.md`）。テストのジョブは `ci` にまとめ、飛ばしたジョブは通った扱いにする。
-- 判断に使うもの（マージ先、ラベル、今あるリリースブランチ、VERSION）は、イベントの中身ではなく、実行した時点の状態を読み直す。人が出した PR のラベルは、自動化では変えない（ただし、cherry-pick のブランチ名の PR には、Cherry-Pick が元の PR のアーカイブされていないラベルと `cherry-pick` ラベルを付ける）。
+- 必須チェックは `release label check` と `ci`。Release Label Check は GitHub のテスト用マージコミット、CI は PR の先頭を確かめる。マージキューでは両方ともマージグループのコミットを使う（前提は `.github/rulesets/README.md`）。テストのジョブは `ci` にまとめ、飛ばしたジョブは通った扱いにする。
+- PR のマージ先、ラベル、今あるリリースブランチは、実行した時点の状態を読み直す。Release Label Check は、再実行でも現在の `refs/pull/<PR 番号>/merge` を取得し、その第 1 親との差分と両方の VERSION を調べる。マージキューでは、イベントの `base_sha` と合成済みコミットを比べる。人が出した PR のラベルは、自動化では変えない（ただし、cherry-pick のブランチ名の PR には、Cherry-Pick が元の PR のアーカイブされていないラベルと `cherry-pick` ラベルを付ける）。
 - 自動化の GitHub App の秘密鍵は Environment `automation-app` の秘密 `AUTOMATION_APP_PRIVATE_KEY` に、Client ID は変数 `AUTOMATION_APP_CLIENT_ID` に置く。Environment は `main` と `release/**/*` でだけ使えるようにする（どちらもコードにはない設定）。App には Contents・Issues・Pull requests・Workflows の書き込みの権限が要り、ルールセットの例外にもする。
-- 使うワークフローとスクリプト：Cherry-Pick と 2 つの Release Preparation は、`main` のもの。Tag Creation は、実行したリリースブランチのもの。Release Label Recheck は、イベントが起きたブランチのもの（削除では `main`）。PR の CI と Release Label Check は、PR をマージ先に合わせた中身（テスト用のマージコミット）のもの（`.github` を変える PR は、変えた後のもので確かめる）。
+- 使うワークフローとスクリプト：Cherry-Pick と 2 つの Release Preparation は、`main` のもの。Tag Creation は、実行したリリースブランチのもの。Release Label Recheck は、イベントが起きたブランチのもの（削除では `main`）。PR の CI と Release Label Check のワークフローは、イベントのテスト用マージコミットのもの。CI の判定用スクリプトとパス設定もそのコミットから取る。Release Label Check のスクリプトとパス設定は、検査するマージコミットから取る（再実行では現在のもの）。
 
 ## 入るべきリリースと、入っているか
 
