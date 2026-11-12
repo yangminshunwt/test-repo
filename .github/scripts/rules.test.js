@@ -222,10 +222,18 @@ test('cherry-pick の PR：元のラベルのブランチが削除されてい�
 
 test('cherry-pick の PR：製品、バージョンの上限、VERSION のチェックは省かない', () => {
   const base = { baseBranch: 'release/product-a/v1.4.0', version: versionFile('1.4.0', '2.0.0') };
-  assertError(check({ ...base, labels: ['cherry-pick'] }), /リリースラベルが付いていません/);
   assertError(check({ ...base, labels: ['cherry-pick', 'product-a/v1.3.0', 'product-b/v2.0.0'] }), /product-a のリリースラベルだけ/);
   assertError(check({ ...base, labels: ['cherry-pick', 'product-a/v1.5.0'] }), /より新しいバージョンです/);
   assertError(check({ ...base, labels: ['cherry-pick', 'product-a/v1.3.0'], version: versionFile('1.3.0', '2.0.0') }), /一致しません/);
+});
+
+test('cherry-pick の PR：元のラベルがアーカイブ済みなら cherry-pick だけでもよい', () => {
+  const base = { baseBranch: 'release/product-a/v1.4.0', version: versionFile('1.4.0', '2.0.0'), labels: ['cherry-pick'] };
+  assertOk(check(base));
+  assertError(check({ ...base, labels: [] }), /リリースラベルが付いていません/);
+  assertError(check({ ...base, baseBranch: 'main' }), /リリースラベルが付いていません/);
+  assertError(check({ ...base, version: versionFile('1.3.0', '2.0.0') }), /一致しません/);
+  assertError(check({ ...base, labels: ['cherry-pick', 'product-b/v2.0.0'] }), /product-a のリリースラベルだけ/);
 });
 
 test('マージ先が main でもリリースブランチでもなければ NG（スタックした PR の上の PR など）', () => {

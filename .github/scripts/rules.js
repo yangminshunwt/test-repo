@@ -101,6 +101,7 @@ function cherryPickLabels(labels, target, existingLabels = []) {
 // リリース済みのバージョンのラベルは、そのリリースブランチが消えている（Tag Creation がリリースタグを打って消す）ので、
 // 「マージ先のバージョンか、今あるリリースブランチのバージョン」の決まりで止まる。
 // cherry-pick の PR は元のラベルを引き継ぐので、そのバージョンのブランチはなくてもよい。
+// 元のラベルがアーカイブ済みなら引き継げないため、リリースラベルがなくてもよい。
 function checkReleaseLabels({ baseBranch, labels, affectedProducts, versionFile, baseVersionFile, branches }) {
   const versions = parseVersionFile(versionFile);
   const baseVersions = parseVersionFile(baseVersionFile);
@@ -140,7 +141,7 @@ function checkReleaseLabels({ baseBranch, labels, affectedProducts, versionFile,
     labelsByProduct.set(releaseLabel.product, [...(labelsByProduct.get(releaseLabel.product) ?? []), releaseLabel]);
   }
   for (const product of requiredProducts) {
-    if (!labelsByProduct.has(product)) {
+    if (!labelsByProduct.has(product) && !(release && labels.includes('cherry-pick'))) {
       errors.push(`${product} に影響する変更ですが、${product} のリリースラベルが付いていません。`);
     }
   }

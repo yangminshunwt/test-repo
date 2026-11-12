@@ -13,7 +13,7 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 function manualGuide(number) {
   return [
-    `手で cherry-pick するときは、行き先のブランチから \`${cherryPickBranch(number, '<行き先のブランチ>')}\` という名前の作業ブランチを作って cherry-pick し、元の PR のうち行き先の製品のリリースラベルと \`cherry-pick\` ラベルを付けて PR を出してください。リリースラベルのバージョンは変えません。このブランチ名は元の PR との対応に、\`cherry-pick\` ラベルは再び cherry-pick しないために使います。`,
+    `手で cherry-pick するときは、行き先のブランチから \`${cherryPickBranch(number, '<行き先のブランチ>')}\` という名前の作業ブランチを作って cherry-pick し、元の PR のうち行き先の製品のリリースラベルと \`cherry-pick\` ラベルを付けて PR を出してください。リリースラベルのバージョンは変えません。元のリリースラベルがアーカイブ済みなら、\`cherry-pick\` ラベルだけを付けます。このブランチ名は元の PR との対応に、\`cherry-pick\` ラベルは再び cherry-pick しないために使います。`,
     `原因を直して自動でやり直すときは、Actions の「Cherry-Pick」→「Run workflow」で、PR の番号 ${number} を指定してください。`,
     '行き先のブランチがもうない（リリースして削除された）ときは、手での cherry-pick もやり直しも要りません（ブランチも作り直さないでください）。変更はそのリリースには入っていません。修正フェーズに入れる変更は、その修正バージョンを指定して PR を出してください。',
   ].join('\n\n');
@@ -75,11 +75,12 @@ async function waitForMergeLink(github, repo, core, pr) {
 }
 
 // cherry-pick の PR に、元の PR のうち行き先の製品のリリースラベルと cherry-pick ラベルを付ける。
+// アーカイブ済みのラベルは新しい PR に付けられないので引き継がず、アーカイブも解除しない。
 // 前の実行で作られた PR にも付けるため、行き先ごとにブランチ名から探す。
 async function labelPullRequests({ github, context }) {
   const repo = context.repo;
-  const { data: original } = await github.rest.pulls.get({ ...repo, pull_number: prNumber() });
-  const labels = original.labels.map((label) => label.name);
+  const originalLabels = await github.paginate(github.rest.issues.listLabelsOnIssue, { ...repo, issue_number: prNumber(), per_page: 100 });
+  const labels = originalLabels.filter((label) => !label.archived_at).map((label) => label.name);
   if (!(await found(github.rest.issues.getLabel({ ...repo, name: 'cherry-pick' })))) {
     await github.rest.issues.createLabel({ ...repo, name: 'cherry-pick', color: '1d76db', description: 'Cherry-pick pull request' });
   }
