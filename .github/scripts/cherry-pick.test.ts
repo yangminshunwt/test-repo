@@ -3,6 +3,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { labelPullRequests } from './cherry-pick/labels.ts';
 
+test('空変更などで PR がなければ、元ラベルの取得やラベル作成をしない', async () => {
+  const github = mockGitHub({ rest: { pulls: { list() {} } }, paginate: async () => [] });
+  await labelPullRequests({ github, repo: { owner: 'o', repo: 'r' }, prNumber: 10, targets: ['release/product-a/v1.3.0'] });
+});
+
 test('cherry-pick の PR ごとに元の全ラベルと cherry-pick を付け、やり直しても重複しない', async () => {
   const targets = ['release/product-a/v1.4.0', 'release/product-b/v2.0.0'];
   const repo = { owner: 'o', repo: 'r' };

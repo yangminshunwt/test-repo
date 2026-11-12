@@ -10,15 +10,14 @@ export interface PullRequestInput {
 
 export type Logger = Pick<typeof core, 'info'>;
 
-// 作り直した PR も、手で作った PR も、元の PR と行き先が同じなら同じブランチ名で探す。
+// ラベルを設定するため、元の PR と行き先に対応する開いている PR を探す。
 export function listCherryPickPulls(
   { github, repo, prNumber }: PullRequestInput,
   target: string,
-  state: 'open' | 'all',
 ) {
   return github.paginate(github.rest.pulls.list, {
     ...repo,
-    state,
+    state: 'open',
     head: `${repo.owner}:${cherryPickBranch(prNumber, target)}`,
     per_page: 100,
   });

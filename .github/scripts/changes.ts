@@ -22,7 +22,7 @@ interface MergedPullsPage {
 }
 
 // リリースに入るべき変更と、それがコミットに入っているかの判断。
-// Tag Creation、Cherry-Pick、Normal Release Preparation が、この同じ定義を使う。
+// Tag Creation と Normal Release Preparation が、この同じ定義を使う。
 // 入るべきかは rules.ts の belongsTo（開発ルールの「リリースラベル」）。git は、すべての履歴を取った作業場所で動かす。
 import { git, prList, report } from './github-helpers.ts';
 import { belongsTo, parseCherryPickBranch } from './rules.ts';
@@ -82,8 +82,8 @@ function missingChanges(pulls: MergedPullRequest[], product: string, version: st
 
 // normal-release-prep.yml から呼ぶ。リリースブランチ（RELEASE_BRANCH。チェックアウトしたときの先頭が BRANCH_SHA）に
 // 入るべきなのに入っていない変更の Cherry-Pick を、PR ごとに実行する。ブランチを作る前に Cherry-Pick が動いた PR
-// （作る間にマージされた PR）のため。Cherry-Pick は、cherry-pick の PR がもうある行き先や、
-// 変更がもう入っている行き先を飛ばすので、何度実行してもよい。
+// （作る間にマージされた PR）のため。Cherry-Pick の作業ブランチがすでにあるときは、
+// Cherry-Pick 側でエラーになるので、既存のブランチを確認する。
 async function catchUp({ github, context, core }: WorkflowInput): Promise<void> {
   const env = process.env;
   const repo = context.repo;

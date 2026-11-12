@@ -341,9 +341,10 @@ test('cherry-pick：main で、リリースブランチのバージョンのラ�
   assert.deepEqual(targets({ labels: ['product-a/v1.4.0'] }), ['release/product-a/v1.4.0']);
   // ラベルのバージョンのブランチがなくても（リリース済みなど）、それ以上のブランチには入れる
   assert.deepEqual(targets({ labels: ['product-a/v1.2.0'] }), ['release/product-a/v1.3.0', 'release/product-a/v1.4.0']);
-  // 古いラベルだけでは修正フェーズのブランチには入れない
+  // すでに存在する修正フェーズのブランチにも候補の PR を作る
   assert.deepEqual(targets({ labels: ['product-a/v1.3.0'], branches: [...BRANCHES, 'release/product-a/v1.3.1'] }), [
     'release/product-a/v1.3.0',
+    'release/product-a/v1.3.1',
     'release/product-a/v1.4.0',
   ]);
 });
@@ -364,9 +365,17 @@ test('cherry-pick：cherry-pick の PR がマージされても、先へは広�
   }
 });
 
-test('cherry-pick：明示した修正バージョンと、それ以降の通常リリースへ送る', () => {
+test('cherry-pick：修正バージョンのラベルも、それ以降の通常・修正リリースへ送る', () => {
   const branches = [...BRANCHES, 'release/product-a/v1.3.1', 'release/product-a/v1.3.2'];
-  assert.deepEqual(targets({ labels: ['product-a/v1.3.1'], branches }), ['release/product-a/v1.3.1', 'release/product-a/v1.4.0']);
+  assert.deepEqual(targets({ labels: ['product-a/v1.3.1'], branches }), ['release/product-a/v1.3.1', 'release/product-a/v1.3.2', 'release/product-a/v1.4.0']);
+});
+
+test('cherry-pick：hotfix の候補にしても rc で必須にはせず、マージ先の上限も守る', () => {
+  const branches = [...BRANCHES, 'release/product-a/v1.3.1', 'release/product-a/v1.4.1'];
+  const pull = { base: 'release/product-a/v1.4.0', head: 'fix', labels: ['product-a/v1.3.0'] };
+  assert.deepEqual(findCherryPickTargets(pull, branches), ['release/product-a/v1.3.0', 'release/product-a/v1.3.1']);
+  assert.equal(belongsTo(pull, 'product-a', '1.3.1'), false);
+  assert.deepEqual(findCherryPickTargets({ ...pull, base: 'feature' }, branches), []);
 });
 
 test('cherry-pick：リリースブランチへの PR に付いた他の製品のラベルは無視する', () => {
