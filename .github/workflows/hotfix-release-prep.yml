@@ -29,8 +29,6 @@ jobs:
       deployment: false
     permissions:
       contents: read
-      actions: write # 前のリリースに入らなかった PR の Cherry-Pick を実行する
-      pull-requests: read # マージされた PR の一覧を読む
     steps:
       # リリースタグとその中身を読むので、すべての履歴（タグも）つきで取る
       - uses: actions/checkout@v7
@@ -96,19 +94,6 @@ jobs:
             この PR がマージされるまで、このリリースブランチへの PR はラベルのチェックで止まるので、早めにマージしてください。
 
             この PR に手でコミットを足した場合、Hotfix Release Preparation をもう一度実行すると、そのコミットは消えます。
-
-      - name: Catch up cherry-picks
-        uses: actions/github-script@v9
-        env:
-          PRODUCT: ${{ inputs.product }}
-          VERSION: ${{ steps.prepare.outputs.next_version }}
-          RELEASE_BRANCH: ${{ steps.prepare.outputs.release_branch }}
-          BRANCH_SHA: ${{ steps.prepare.outputs.branch_sha }}
-        with:
-          retries: 3 # GitHub API の一時的なエラー（5xx）はやり直す
-          script: |
-            const { catchUp } = require('./.github/scripts/changes.js')
-            await catchUp({ github, context, core })
 
       - name: Summary
         env:

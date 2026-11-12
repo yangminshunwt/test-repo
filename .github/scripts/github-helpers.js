@@ -69,4 +69,4 @@ async function report(core, heading, lines) {
   await core.summary.addHeading(heading, 3).addList(lines).write();
 }
 
-module.exports = { branchHead, createReleaseBranch, createReleaseLabel, deleteBranchIfAt, git, localReleaseBranches, prList, report };
+module.exports = { branchHead, createReleaseBranch, createReleaseLabel, deleteBranchIfAt, found, git, localReleaseBranches, prList, report };

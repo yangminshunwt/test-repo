@@ -39,9 +39,10 @@ test('マージコミットが祖先なら入っている', () => {
 
 test('cherry-pick の PR のマージコミットが祖先なら入っている', () => {
   const pick = commit(root, { 'a.txt': 'a10-resolved\n', 'b.txt': 'b3\n' }, 'Change a (#10) (#11), conflict resolved');
-  const carrier = { number: 11, base: 'release/product-a/v1.0.0', head: 'cherry-pick-10-to-release/product-a/v1.0.0', mergeCommit: pick, labels: [] };
+  const carrier = { number: 11, base: 'release/product-a/v1.0.0', head: 'cherry-pick-10-to-release/product-a/v1.0.0', mergeCommit: pick, labels: ['cherry-pick', 'product-a/v1.0.0'] };
   const head = commit(pick, { 'b.txt': 'b4\n' }, 'later');
   assert.equal(containsChange([pull10, carrier], pull10, head), true);
+  assert.deepEqual(missingChanges([pull10, carrier], 'product-a', '1.0.0', head), []);
 });
 
 test('同じ内容がもう入っていれば（当てても何も変わらなければ）入っている', () => {
@@ -59,6 +60,14 @@ test('入っていない変更は、そのバージョンに入るべきもの�
   const unlabeled = { number: 13, base: 'main', head: 'f13', mergeCommit: m10, labels: [] };
   assert.deepEqual(missingChanges([pull10, other, unlabeled], 'product-a', '1.0.0', root).map((pull) => pull.number), [10]);
   assert.deepEqual(missingChanges([pull10, other, unlabeled], 'product-a', '1.0.0', m10), []);
+});
+
+test('修正フェーズ：正式タグに入らなかった旧バージョンの変更を、欠落とみなさない', () => {
+  const hotfix = { ...pull10, number: 14, labels: ['product-a/v1.0.1'] };
+  const carrier = { ...hotfix, number: 15, head: 'renamed-branch', labels: ['cherry-pick', 'product-a/v1.0.1'] };
+  assert.deepEqual(missingChanges([pull10], 'product-a', '1.0.1', root), []);
+  assert.deepEqual(missingChanges([pull10, hotfix, carrier], 'product-a', '1.0.1', root).map((pull) => pull.number), [14]);
+  assert.deepEqual(missingChanges([pull10, hotfix], 'product-a', '1.0.2', root), []);
 });
 
 test.after(() => {

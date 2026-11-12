@@ -132,9 +132,9 @@ async function release({ github, context, core }) {
   if (open.length > 0) problems.push(`${branch} に向けた開いている PR（${prList(open)}）は、このリリースに入っておらず、ブランチの削除で閉じられます。`);
   if (missing.length > 0) {
     problems.push(
-      `ラベルではこのリリースに入るはずなのに、入っていない変更があります（${prList(missing)}）。修正フェーズに入れるときは、Hotfix Release Preparation が製品の最新のリリースタグから` +
-        `修正フェーズのブランチを作り、main やより新しいリリースブランチにマージした変更を自動で cherry-pick します（このリリースより新しいリリースがあれば、このバージョンの修正フェーズは Hotfix Release Preparation では作れないので、管理者に作ってもらってください）。` +
-        `${branch} に直接マージした変更は自動では入らないので、修正フェーズのブランチに PR を出し直してください。`,
+      `ラベルではこのリリースに入るはずなのに、入っていない変更があります（${prList(missing)}）。` +
+        'Hotfix Release Preparation は正式なリリースタグから修正フェーズのブランチを作りますが、未リリースの変更は自動で取り込みません。' +
+        '修正フェーズに入れる変更は、その修正バージョンを指定して PR を出してください。',
     );
   }
   await report(core, `${plan.releaseTag} のリリース`, [...lines, ...problems, await archiveLabel(github, repo, plan.releaseTag)]);

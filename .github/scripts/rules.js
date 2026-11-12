@@ -82,6 +82,17 @@ function extractReleaseLabels(labels, products) {
   });
 }
 
+// 元の PR のうち、行き先の製品のリリースラベルをバージョンを変えずに引き継ぐ。
+// 既存の PR ではリリースラベルだけを置き換え、ほかのラベルは残す。
+function cherryPickLabels(labels, target, existingLabels = []) {
+  const { product } = parseReleaseBranch(target);
+  return [...new Set([
+    ...existingLabels.filter((label) => !RELEASE_LABEL_PATTERN.test(label)),
+    'cherry-pick',
+    ...extractReleaseLabels(labels, [product]).map(({ label }) => label),
+  ])];
+}
+
 // baseBranch: PR のマージ先
 // labels: PR に付いているラベル
 // affectedProducts: 変更が影響する製品（versionFile の製品のうち）
@@ -89,6 +100,7 @@ function extractReleaseLabels(labels, products) {
 // branches: 今あるリリースブランチの名前
 // リリース済みのバージョンのラベルは、そのリリースブランチが消えている（Tag Creation がリリースタグを打って消す）ので、
 // 「マージ先のバージョンか、今あるリリースブランチのバージョン」の決まりで止まる。
+// cherry-pick の PR は元のラベルを引き継ぐので、そのバージョンのブランチはなくてもよい。
 function checkReleaseLabels({ baseBranch, labels, affectedProducts, versionFile, baseVersionFile, branches }) {
   const versions = parseVersionFile(versionFile);
   const baseVersions = parseVersionFile(baseVersionFile);
@@ -171,7 +183,7 @@ function checkReleaseLabels({ baseBranch, labels, affectedProducts, versionFile,
     const target = release ? `マージ先のブランチのバージョン（v${upper}）` : `マージ後の VERSION（${product}/${upper}）`;
     if (compareVersions(version, upper) > 0) {
       errors.push(`${label}：${target}より新しいバージョンです。`);
-    } else if (version !== upper && !hasBranch(product, version)) {
+    } else if (version !== upper && !hasBranch(product, version) && !(release && labels.includes('cherry-pick'))) {
       errors.push(`${label}：${product} に v${version} のリリースブランチがありません（リリース済みか、まだ作っていません）。${target}か、それより古い今あるリリースブランチのバージョンを付けてください。`);
     }
   }
@@ -180,19 +192,21 @@ function checkReleaseLabels({ baseBranch, labels, affectedProducts, versionFile,
 }
 
 // PR の変更が、product の version のリリースに入るべきか（開発ルールの「リリースラベル」）。
-// その製品のリリースラベルのバージョン以上で、main にマージした PR ならそれより新しいすべてのバージョン、
-// リリースブランチにマージした PR ならそのブランチのバージョンまで。cherry-pick の PR は、元の PR の変更を運ぶものなので数えない。
+// 通常リリースはラベルのバージョン以上、修正フェーズはそのバージョンのラベルを明示したものだけ。
+// リリースブランチにマージした PR は、そのブランチのバージョンまで。
+// cherry-pick ラベルの PR は、元の PR の変更を運ぶものなので数えない。ブランチ名では判定しない。
 // pull: { base, head, labels }（labels はラベルの名前）
 function belongsTo(pull, product, version) {
-  if (parseCherryPickBranch(pull.head) !== null) return false;
+  if (pull.labels.includes('cherry-pick')) return false;
   const base = parseReleaseBranch(pull.base);
   if (pull.base !== 'main' && !(base?.product === product && compareVersions(version, base.version) <= 0)) return false;
-  return extractReleaseLabels(pull.labels, [product]).some((label) => compareVersions(label.version, version) <= 0);
+  return extractReleaseLabels(pull.labels, [product]).some((label) =>
+    parseVersion(version)[2] === 0 ? compareVersions(label.version, version) <= 0 : label.version === version,
+  );
 }
 
 // マージされた PR（pull: { base, head, labels }）の変更を cherry-pick するブランチを、今あるリリースブランチ（branches）から決める。
-// 変更が入るべきバージョン（belongsTo）のブランチのうち、マージ先以外。main にマージした PR には上限がない
-// （マージの時点で main のバージョンより新しいブランチはなく、あとから作られる修正フェーズのブランチにも入れるため）。
+// 変更が入るべきバージョン（belongsTo）のブランチのうち、マージ先以外。
 function findCherryPickTargets(pull, branches) {
   return branches
     .filter((name) => {
@@ -269,6 +283,7 @@ module.exports = {
   belongsTo,
   checkReleaseLabels,
   cherryPickBranch,
+  cherryPickLabels,
   compareVersions,
   findAffectedProducts,
   findCherryPickTargets,

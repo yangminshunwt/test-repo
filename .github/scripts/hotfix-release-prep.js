@@ -35,7 +35,6 @@ async function prepare({ github, context, core }) {
   core.setOutput('released_tag', plan.releasedTag);
   core.setOutput('next_version', plan.nextVersion);
   core.setOutput('release_branch', plan.releaseBranch);
-  core.setOutput('branch_sha', branch.head); // 入っていない変更を、チェックアウトしたときのブランチの先頭で確かめる（changes.js の catchUp）
   core.setOutput('next_label', plan.nextLabel);
 }
 

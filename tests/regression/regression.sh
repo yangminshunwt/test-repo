@@ -244,7 +244,7 @@ has_branch() { git fetch -q origin --prune; [ "$(git ls-remote --heads origin "$
 no_branch() { ! has_branch "$1"; }
 has_tag() { [ "$(git ls-remote --tags origin "refs/tags/$1" | wc -l | tr -d ' ')" -ge 1 ]; }
 tag_commit() { git fetch -q origin --tags --force; git rev-parse "$1^{commit}"; }
-label_names() { gh pr view "$1" --repo $R --json labels --jq '[.labels[].name] | join(",")'; }
+label_names() { gh pr view "$1" --repo $R --json labels --jq '[.labels[].name] | sort | join(",")'; }
 author_of() { gh pr view "$1" --repo $R --json author --jq .author.login; }
 
 # =====================================================================
@@ -402,7 +402,7 @@ gh pr close "$RL" --repo $R --delete-branch >/dev/null 2>&1
 log "C. Cherry-pick"
 C1=$(make_pr c1-normal main 'echo c1-$T > ProductA/c1.txt' "product-a/v$A0"); expect_merge C1 "$C1"; wait_cherry_run "$C1" >/dev/null
 P=$(pr_for "cherry-pick-$C1-to-$RA")
-ok_if C1b "cherry-pick #$P to $RA has label product-a/v$A0 and is created by the App" test "$(label_names "$P") $(author_of "$P")" = "product-a/v$A0 $APP"
+ok_if C1b "cherry-pick #$P to $RA keeps product-a/v$A0, has cherry-pick, and is created by the App" test "$(label_names "$P") $(author_of "$P")" = "cherry-pick,product-a/v$A0 $APP"
 expect_merge C1c "$P"; wait_cherry_run "$P" >/dev/null
 ok_if C1d "merging cherry-pick #$P does not cherry-pick further" test "$(picks_of "$P")" = 0
 
@@ -493,7 +493,7 @@ K3=$(make_pr k3-conflict main "sed -i '' '1s/.*/product-b fix2-$T/' ProductB/app
 KD3=$(pr_for "cherry-pick-$K3-to-$RB"); gh pr close "$KD3" --repo $R >/dev/null
 git fetch -q origin && git switch -q -C "cherry-pick-$K3-to-$RB" "origin/$RB" && sed -i '' "1s/.*/product-b fix2-$T/" ProductB/app.txt && git commit -q -am "Manual cherry-pick of #$K3" && gpush -f origin "HEAD:cherry-pick-$K3-to-$RB" 2>/dev/null
 git switch -q main
-KM=$(gh pr create --repo $R --base "$RB" --head "cherry-pick-$K3-to-$RB" --title "[cherry-pick $RB] manual #$K3" --body "manual cherry-pick" --label "product-b/v$B0"); KM=${KM##*/}
+KM=$(gh pr create --repo $R --base "$RB" --head "cherry-pick-$K3-to-$RB" --title "[cherry-pick $RB] manual #$K3" --body "manual cherry-pick" --label "product-b/v$B0" --label cherry-pick); KM=${KM##*/}
 expect_merge K3b "$KM"
 expect_run K3c "$(dispatch cherry-pick.yml -f pr_number="$K3")" success "cherry-pick の PR があります"
 
@@ -546,11 +546,9 @@ expect_label H1f "$YP" fail "一致しません"
 expect_merge H1g "$HC"
 S=$(since_now); gh pr update-branch "$YP" --repo $R >/dev/null 2>&1; expect_label H1h "$YP" pass "" "$S"
 expect_merge H1i "$YP"
-expect_run H1j "$(dispatch release.yml --ref "release/product-c/v$CH" -f step=rc)" failure "入っていない変更があります（#$X）"
-ok_if H1k "Hotfix Release Preparation cherry-picked #$X (missed by v$C0) to release/product-c/v$CH" test -n "$(pr_for "cherry-pick-$X-to-release/product-c/v$CH")"
+expect_run H1j "$(dispatch release.yml --ref "release/product-c/v$CH" -f step=rc)" success "product-c/v$CH-rc.1 を"
+ok_if H1k "Hotfix Release Preparation does not cherry-pick #$X (omitted from v$C0)" test -z "$(pr_for "cherry-pick-$X-to-release/product-c/v$CH")"
 ok_if H1l "#$E6P (merged directly into the released branch) is not cherry-picked" test -z "$(pr_for "cherry-pick-$E6P-to-release/product-c/v$CH")"
-expect_merge H1m "$(pr_for "cherry-pick-$X-to-release/product-c/v$CH")"
-expect_run H1n "$(dispatch release.yml --ref "release/product-c/v$CH" -f step=rc)" success "product-c/v$CH-rc.1 を"
 
 log "H2. Hotfix release prep (product-a)"
 AH=$(next_patch "$A0")
@@ -566,7 +564,7 @@ expect_run H4 "$(dispatch normal-release-prep.yml -f product=product-a -f bump=m
 expect_merge H4b "$(prep_pr "normal-release-prep/product-a/")"
 H4M=$(make_pr h4-both main 'echo both-$T > ProductA/h4both.txt' "product-a/v$AH"); expect_merge H4c "$H4M"; wait_cherry_run "$H4M" >/dev/null
 P1=$(pr_for "cherry-pick-$H4M-to-release/product-a/v$AH"); P2=$(pr_for "cherry-pick-$H4M-to-release/product-a/v$A")
-ok_if H4d "an older label is cherry-picked to both release branches, each with its own version label" test "$(label_names "${P1:-0}" 2>/dev/null) $(label_names "${P2:-0}" 2>/dev/null)" = "product-a/v$AH product-a/v$A"
+ok_if H4d "both cherry-pick PRs retain the original version label and have cherry-pick" test "$(label_names "${P1:-0}" 2>/dev/null) $(label_names "${P2:-0}" 2>/dev/null)" = "cherry-pick,product-a/v$AH cherry-pick,product-a/v$AH"
 expect_merge H4e "$P1"; expect_merge H4f "$P2"
 H4P=$(make_pr h4-pattern3 "release/product-a/v$A" 'echo p3-$T > ProductA/p3.txt' "product-a/v$AH"); expect_merge H4g "$H4P"; wait_cherry_run "$H4P" >/dev/null
 gh pr close "$(pr_for "cherry-pick-$H4P-to-release/product-a/v$AH")" --repo $R >/dev/null
