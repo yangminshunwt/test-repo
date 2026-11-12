@@ -7,40 +7,29 @@ on:
       - 'release/**'
     # ラベルの付け外しやマージ先の変更でもチェックし直す
     types: [opened, synchronize, reopened, edited, labeled, unlabeled]
-  # マージキュー（main だけ）：キューが作ったマージグループのコミットで確かめる。必須チェックなので、ここでも結果を出さないと
-  # キューがマージできない。マージグループのコミットが、そのまま main に入る
+  # マージキューでも同じ必須チェックを出す。
   merge_group:
     types: [checks_requested]
-    branches: [main]
-
-# concurrency で前の実行を取り消すことはしない。PR の作成とラベルの追加のように続けて起きたイベントで、
-# あとに作られた実行のほうが取り消されると、その結果（取り消し）が必須チェックに使われてマージできなくなるため。
-# どの実行もその時点のマージ先とラベルを取り直して判定するので、取り消さなくても最後に作られた実行の結果が正しくなる。
 
 permissions:
   contents: read
+  pull-requests: read
 
 jobs:
   release-label-check:
     name: release label check
-    # マージした PR は、もうマージも再オープンもできないので確かめない（閉じただけの PR は再オープンできるので確かめる。飛ばした結果は成功の扱いになるため）。
-    # マージキューでは必ず確かめる（飛ばすと成功の扱いになり、確かめずにマージされる）
+    # マージ済み PR のラベル変更では実行しない。
     if: github.event_name == 'merge_group' || !github.event.pull_request.merged
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      pull-requests: read
     steps:
-      # PR の先頭（マージキューでは、マージグループのコミット）を、マージ前の中身との分かれ目と今あるリリースブランチを
-      # 読むために、すべての履歴（ほかのブランチも）つきで取る
+      # 差分・VERSION・リリースブランチの判定用に、PR の先頭と全履歴を取得する。
       - uses: actions/checkout@v7
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
           persist-credentials: false
 
-      # スクリプトと製品のパス設定（.github の直下のファイル）は、このワークフローと同じ版（テスト用のマージコミットか、マージグループのコミット）のものを使う
-      # （PR の先頭が古いと、ワークフローと食い違うため）。PR の先頭は、変更とマージ後の中身を調べるデータとしてだけ使う
+      # スクリプトとパス設定は、実行中のワークフローと同じコミットから取得する。
       - uses: actions/checkout@v7
         with:
           path: .automation
@@ -48,6 +37,7 @@ jobs:
           persist-credentials: false
 
       - id: base
+        name: Read pull request and base
         uses: actions/github-script@v9
         with:
           retries: 3 # GitHub API の一時的なエラー（5xx）はやり直す
@@ -55,8 +45,9 @@ jobs:
             const { findBase } = require('./.automation/.github/scripts/release-label-check.ts')
             await findBase({ github, context, core })
 
-      # 分かれ目から PR の先頭までの変更を git で探す（token を空にすると API ではなく git を使い、変更ファイルの件数の上限もない）
+      # token を空にして、ファイル数制限のある API ではなく git で差分を取る。
       - id: products
+        name: Find affected products
         uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
         with:
           filters: .automation/.github/product-paths.yml
