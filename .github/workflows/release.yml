@@ -62,5 +62,5 @@ jobs:
           retries: 3 # GitHub API の一時的なエラー（5xx）はやり直す
           github-token: ${{ steps.app-token.outputs.token }}
           script: |
-            const { releaseCandidate, release } = require('./.github/scripts/release.js')
+            const { releaseCandidate, release } = require('./.github/scripts/release.ts')
             await (process.env.STEP === 'rc' ? releaseCandidate : release)({ github, context, core })

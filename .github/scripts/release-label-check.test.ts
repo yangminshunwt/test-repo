@@ -1,19 +1,19 @@
-'use strict';
-
-// release-label-check.js の findBase と check を、マージキューのマージグループを模した一時的な git リポジトリで確かめる
+import { mockCore, mockContext, mockGitHub } from './test-helpers.ts';
+import type { Context } from './github.ts';
+// release-label-check.ts の findBase と check を、マージキューのマージグループを模した一時的な git リポジトリで確かめる
 // （merge_group のイベントは、マージキューに PR を入れないと起きないので、ここでマージグループの形を作って確かめる）。
-const test = require('node:test');
-const assert = require('node:assert/strict');
-const { execFileSync } = require('child_process');
-const fs = require('fs');
-const os = require('os');
-const path = require('path');
-const { findBase, check } = require('./release-label-check.js');
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { findBase, check } from './release-label-check.ts';
 
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'release-label-check-test-'));
-const git = (...args) => execFileSync('git', ['-C', dir, '-c', 'user.name=t', '-c', 'user.email=t@example.com', ...args], { encoding: 'utf8' }).trim();
+const git = (...args: string[]) => execFileSync('git', ['-C', dir, '-c', 'user.name=t', '-c', 'user.email=t@example.com', ...args], { encoding: 'utf8' }).trim();
 // parent の上で files を書き換えたコミットを作り、その SHA を返す
-function commit(parent, files, message) {
+function commit(parent: string | null, files: Record<string, string>, message: string) {
   if (parent) git('checkout', '-q', '--detach', parent);
   for (const [file, content] of Object.entries(files)) {
     fs.mkdirSync(path.dirname(path.join(dir, file)), { recursive: true });
@@ -23,7 +23,7 @@ function commit(parent, files, message) {
   git('commit', '-q', '-m', message);
   return git('rev-parse', 'HEAD');
 }
-const versionFile = (a) => `# version\nproduct-a/${a}\nproduct-b/2.0.0\n`;
+const versionFile = (a: string) => `# version\nproduct-a/${a}\nproduct-b/2.0.0\n`;
 
 git('init', '-q');
 const root = commit(null, { VERSION: versionFile('1.4.0'), 'ProductA/app.txt': 'a\n', 'ProductB/app.txt': 'b\n' }, 'root');
@@ -48,25 +48,25 @@ test.after(() => {
 });
 
 function fakeCore() {
-  const outputs = {};
-  const failures = [];
+  const outputs: Record<string, unknown> = {};
+  const failures: string[] = [];
   const summary = { addHeading: () => summary, addTable: () => summary, addList: () => summary, write: async () => summary };
-  return { outputs, failures, summary, setOutput: (name, value) => (outputs[name] = value), setFailed: (message) => failures.push(message), warning() {}, error() {} };
+  return mockCore({ outputs, failures, summary, setOutput: (name: string, value: unknown) => (outputs[name] = value), setFailed: (message: string | Error) => failures.push(String(message)), warning() {}, error() {} });
 }
 // number の PR（マージ先は main、ラベルは labels）だけを返す API
-const fakeGithub = (number, labels) => ({
+const fakeGithub = (number: number, labels: string[]) => mockGitHub({
   rest: {
     pulls: {
-      get: async ({ pull_number }) => {
+      get: async ({ pull_number }: { pull_number: number }) => {
         assert.equal(pull_number, number);
         return { data: { number, base: { ref: 'main' }, labels: labels.map((name) => ({ name })) } };
       },
     },
   },
 });
-const context = (payload) => ({ repo: { owner: 'o', repo: 'r' }, payload });
+const context = (payload: Context['payload']) => mockContext({ repo: { owner: 'o', repo: 'r' }, payload });
 
-async function runCheck(before, labels) {
+async function runCheck(before: string, labels: string[]) {
   const core = fakeCore();
   Object.assign(process.env, {
     BASE_REF: 'main',

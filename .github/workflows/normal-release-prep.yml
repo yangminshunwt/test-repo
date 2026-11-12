@@ -64,7 +64,7 @@ jobs:
           retries: 3 # GitHub API の一時的なエラー（5xx）はやり直す
           github-token: ${{ steps.app-token.outputs.token }}
           script: |
-            const { prepare } = require('./.github/scripts/normal-release-prep.js')
+            const { prepare } = require('./.github/scripts/normal-release-prep.ts')
             await prepare({ github, context, core })
 
       # create-pull-request は、この作業場所に浅い fetch（--depth）をして履歴を切り詰めることがあるので、その前に、すべての履歴で確かめる
@@ -78,7 +78,7 @@ jobs:
         with:
           retries: 3 # GitHub API の一時的なエラー（5xx）はやり直す
           script: |
-            const { catchUp } = require('./.github/scripts/changes.js')
+            const { catchUp } = require('./.github/scripts/changes.ts')
             await catchUp({ github, context, core })
 
       - id: pull-request

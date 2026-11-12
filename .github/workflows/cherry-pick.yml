@@ -52,18 +52,18 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - id: select
-        name: Select targets
+      - id: prepare
+        name: Prepare cherry-pick
         uses: actions/github-script@v9
         with:
           retries: 3 # GitHub API の一時的なエラー（5xx）はやり直す
           script: |
-            const { selectTargets } = require('./.github/scripts/cherry-pick.js')
-            await selectTargets({ github, context, core })
+            const { prepare } = require('./.github/scripts/cherry-pick/workflow.ts')
+            await prepare({ github, context, core })
 
       # GITHUB_TOKEN で作った PR ではチェックが走らないので、GitHub App のトークンを使う
       - id: app-token
-        if: steps.select.outputs.targets != ''
+        if: steps.prepare.outputs.targets != ''
         uses: actions/create-github-app-token@v3
         with:
           client-id: ${{ vars.AUTOMATION_APP_CLIENT_ID }}
@@ -74,23 +74,22 @@ jobs:
           permission-workflows: write # .github/workflows の変更も cherry-pick するため
 
       # backport-action は作業場所のブランチを切り替えるので、スクリプトとは別の場所に取る
-      - if: steps.select.outputs.branches != ''
+      - if: steps.prepare.outputs.branches != ''
         uses: actions/checkout@v7
         with:
           path: backport-work
           token: ${{ steps.app-token.outputs.token }}
 
       - id: backport
-        if: steps.select.outputs.branches != ''
-        uses: korthout/backport-action@0ebd44f9c79a4a0a171200dcdcceec3ed9ca732f # v4.7.1
+        if: steps.prepare.outputs.branches != ''
+        uses: korthout/backport-action@ad272ff24e4a8593bf18a951a154ae6af93b26b8 # v5.0.0
         with:
           github_token: ${{ steps.app-token.outputs.token }}
           github_workspace: ${{ github.workspace }}/backport-work
           source_pr_number: ${{ env.PR_NUMBER }}
-          target_branches: ${{ steps.select.outputs.branches }}
-          label_pattern: '' # 行き先は select で決めたものだけにする
-          branch_name: cherry-pick-${pull_number}-to-${target_branch} # rules.js の cherryPickBranch・parseCherryPickBranch と同じ形
-          # ${...} は、タイトルと本文のそれぞれで最初の 1 か所しか置き換わらないので、同じものを 2 回書かない
+          target_branches: ${{ steps.prepare.outputs.branches }}
+          label_pattern: '' # 行き先は prepare で決めたものだけにする
+          branch_name: cherry-pick-${pull_number}-to-${target_branch} # rules.ts の cherryPickBranch・parseCherryPickBranch と同じ形
           pull_title: '🍒 [#${pull_number} → ${target_branch}] ${pull_title}'
           pull_description: |-
             #${pull_number} を `${target_branch}` に cherry-pick する PR です。
@@ -103,13 +102,13 @@ jobs:
         if: ${{ !cancelled() && steps.app-token.outcome == 'success' }}
         uses: actions/github-script@v9
         env:
-          TARGETS: ${{ steps.select.outputs.targets }}
+          TARGETS: ${{ steps.prepare.outputs.targets }}
         with:
           retries: 3 # GitHub API の一時的なエラー（5xx）はやり直す
           github-token: ${{ steps.app-token.outputs.token }}
           script: |
-            const { labelPullRequests } = require('./.github/scripts/cherry-pick.js')
-            await labelPullRequests({ github, context })
+            const { label } = require('./.github/scripts/cherry-pick/workflow.ts')
+            await label({ github, context, core })
 
       - name: Report failures
         if: ${{ !cancelled() }}
@@ -123,5 +122,5 @@ jobs:
         with:
           retries: 3 # GitHub API の一時的なエラー（5xx）はやり直す
           script: |
-            const { reportFailures } = require('./.github/scripts/cherry-pick.js')
-            await reportFailures({ github, context, core })
+            const { report } = require('./.github/scripts/cherry-pick/workflow.ts')
+            await report({ github, context, core })

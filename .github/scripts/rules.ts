@@ -1,19 +1,42 @@
 // 開発ルールの判断（バージョン、リリースブランチと cherry-pick のブランチの名前、リリースラベルのチェック、
 // 変更がどのリリースに入るべきか、各ワークフローが何をするか）。
 // GitHub に依存しない関数だけを置き、単体テストできるようにしている。
-'use strict';
+
+interface ReleaseVersion {
+  product: string;
+  version: string;
+}
+
+interface ReleaseLabel extends ReleaseVersion {
+  label: string;
+}
+
+export interface LabeledPullRequest {
+  base: string;
+  head: string;
+  labels: string[];
+}
+
+export interface ReleaseLabelInput {
+  baseBranch: string;
+  labels: string[];
+  affectedProducts: string[];
+  versionFile: string;
+  baseVersionFile: string;
+  branches: string[];
+}
 
 const VERSION_PATTERN = /^(\d+)\.(\d+)\.(\d+)$/;
 const RELEASE_BRANCH_PATTERN = /^release\/([^/]+)\/v(\d+\.\d+\.\d+)$/;
 const RELEASE_LABEL_PATTERN = /^([^/]+)\/v(\d+\.\d+\.\d+)$/;
 
-function parseVersion(text) {
+function parseVersion(text: string): [number, number, number] | null {
   const match = VERSION_PATTERN.exec(text);
-  return match ? match.slice(1, 4).map(Number) : null;
+  return match ? [Number(match[1]), Number(match[2]), Number(match[3])] : null;
 }
 
-function compareVersions(a, b) {
-  const [x, y] = [parseVersion(a), parseVersion(b)];
+function compareVersions(a: string, b: string): number {
+  const [x, y] = [parseVersion(a)!, parseVersion(b)!];
   for (let i = 0; i < 3; i++) {
     if (x[i] !== y[i]) return x[i] - y[i];
   }
@@ -21,8 +44,8 @@ function compareVersions(a, b) {
 }
 
 // VERSION ファイルの中身を { 製品名: 'X.Y.Z' } にする。
-function parseVersionFile(text) {
-  const versions = {};
+function parseVersionFile(text: string): Record<string, string> {
+  const versions: Record<string, string> = {};
   for (const raw of text.split('\n')) {
     const line = raw.trim();
     if (line === '' || line.startsWith('#')) continue;
@@ -39,32 +62,32 @@ function parseVersionFile(text) {
 }
 
 // release/<製品名>/vX.Y.Z なら { product, version } を、そうでなければ null を返す。
-function parseReleaseBranch(name) {
+function parseReleaseBranch(name: string): ReleaseVersion | null {
   const match = RELEASE_BRANCH_PATTERN.exec(name);
   return match ? { product: match[1], version: match[2] } : null;
 }
 
 // cherry-pick の PR のブランチ名（cherry-pick.yml の branch_name と同じ形）。手で cherry-pick するときも、この名前にしてもらう。
-function cherryPickBranch(prNumber, target) {
+function cherryPickBranch(prNumber: number, target: string): string {
   return `cherry-pick-${prNumber}-to-${target}`;
 }
 
 // cherry-pick の PR のブランチ名なら元の PR の番号を、そうでなければ null を返す。
-function parseCherryPickBranch(name) {
+function parseCherryPickBranch(name: string): number | null {
   const match = /^cherry-pick-(\d+)-to-/.exec(name);
   return match ? Number(match[1]) : null;
 }
 
 // マージキューが作るブランチ（refs/heads/gh-readonly-queue/<マージ先>/pr-<PR の番号>-<もとにしたコミット>）の PR の番号。
 // merge_group のイベントには PR の番号がないので、ここから読む（GitHub のドキュメントにあるのは gh-readonly-queue/<マージ先> の部分まで）。
-function parseMergeQueueBranch(ref) {
+function parseMergeQueueBranch(ref: string): number | null {
   const match = /^(?:refs\/heads\/)?gh-readonly-queue\/.+\/pr-(\d+)-[0-9a-f]+$/.exec(ref);
   return match ? Number(match[1]) : null;
 }
 
 // 変更が影響する製品を、paths-filter が当てたフィルタの名前から決める。
 // 製品のパス設定に書かれていないファイル（all に当たって listed に当たらないもの）があれば、すべての製品に影響するとみなす。
-function findAffectedProducts({ matched, products, allFileCount, listedFileCount }) {
+function findAffectedProducts({ matched, products, allFileCount, listedFileCount }: { matched: string[]; products: string[]; allFileCount: number; listedFileCount: number }) {
   if (allFileCount > listedFileCount) {
     return {
       products: [...products],
@@ -75,21 +98,20 @@ function findAffectedProducts({ matched, products, allFileCount, listedFileCount
 }
 
 // PR のラベルのうち、products の製品のリリースラベル（<製品名>/vX.Y.Z）を { label, product, version } で返す。ほかのラベルは無視する。
-function extractReleaseLabels(labels, products) {
+function extractReleaseLabels(labels: string[], products: string[]): ReleaseLabel[] {
   return labels.flatMap((label) => {
     const match = RELEASE_LABEL_PATTERN.exec(label);
     return match && products.includes(match[1]) ? [{ label, product: match[1], version: match[2] }] : [];
   });
 }
 
-// 元の PR のうち、行き先の製品のリリースラベルをバージョンを変えずに引き継ぐ。
+// 元の PR のラベルを、製品やバージョンを変えずに引き継ぐ。
 // 既存の PR ではリリースラベルだけを置き換え、ほかのラベルは残す。
-function cherryPickLabels(labels, target, existingLabels = []) {
-  const { product } = parseReleaseBranch(target);
+function cherryPickLabels(labels: string[], existingLabels: string[] = []): string[] {
   return [...new Set([
     ...existingLabels.filter((label) => !RELEASE_LABEL_PATTERN.test(label)),
     'cherry-pick',
-    ...extractReleaseLabels(labels, [product]).map(({ label }) => label),
+    ...labels,
   ])];
 }
 
@@ -102,15 +124,15 @@ function cherryPickLabels(labels, target, existingLabels = []) {
 // 「マージ先のバージョンか、今あるリリースブランチのバージョン」の決まりで止まる。
 // cherry-pick の PR は元のラベルを引き継ぐので、そのバージョンのブランチはなくてもよい。
 // 元のラベルがアーカイブ済みなら引き継げないため、リリースラベルがなくてもよい。
-function checkReleaseLabels({ baseBranch, labels, affectedProducts, versionFile, baseVersionFile, branches }) {
+function checkReleaseLabels({ baseBranch, labels, affectedProducts, versionFile, baseVersionFile, branches }: ReleaseLabelInput): { errors: string[] } {
   const versions = parseVersionFile(versionFile);
   const baseVersions = parseVersionFile(baseVersionFile);
   const products = Object.keys(versions);
   const errors = [];
   let releaseLabels = extractReleaseLabels(labels, products);
-  const hasBranch = (product, version) => branches.includes(`release/${product}/v${version}`);
+  const hasBranch = (product: string, version: string) => branches.includes(`release/${product}/v${version}`);
 
-  let release = null;
+  let release: ReleaseVersion | null = null;
   let requiredProducts;
   if (baseBranch === 'main') {
     requiredProducts = affectedProducts;
@@ -124,11 +146,12 @@ function checkReleaseLabels({ baseBranch, labels, affectedProducts, versionFile,
     }
     requiredProducts = [release.product];
     for (const { label, product } of releaseLabels) {
-      if (product !== release.product) {
+      if (product !== release.product && !labels.includes('cherry-pick')) {
         errors.push(`${label}：${release.product} のリリースブランチへの PR には、${release.product} のリリースラベルだけを付けてください。`);
       }
     }
-    releaseLabels = releaseLabels.filter(({ product }) => product === release.product);
+    // cherry-pick は他の製品のラベルも引き継ぐが、このリリースの判定には使わない。
+    releaseLabels = releaseLabels.filter(({ product }) => product === release!.product);
     if (versions[release.product] !== release.version) {
       errors.push(
         `マージ後の VERSION（${release.product}/${versions[release.product]}）が、マージ先のブランチのバージョン（v${release.version}）と一致しません。先に VERSION を上げるか、作業ブランチを切ったブランチを確かめてください。`,
@@ -136,7 +159,7 @@ function checkReleaseLabels({ baseBranch, labels, affectedProducts, versionFile,
     }
   }
 
-  const labelsByProduct = new Map();
+  const labelsByProduct = new Map<string, ReleaseLabel[]>();
   for (const releaseLabel of releaseLabels) {
     labelsByProduct.set(releaseLabel.product, [...(labelsByProduct.get(releaseLabel.product) ?? []), releaseLabel]);
   }
@@ -167,7 +190,7 @@ function checkReleaseLabels({ baseBranch, labels, affectedProducts, versionFile,
     const [before, after] = [baseVersions[product], versions[product]];
     if (compareVersions(after, before) < 0) {
       errors.push(`VERSION の ${product} を ${before} から ${after} に下げています。`);
-    } else if (!release && parseVersion(after)[2] !== 0) {
+    } else if (!release && parseVersion(after)![2] !== 0) {
       errors.push(`VERSION の ${product} を ${after} にしています。main のバージョンは、パッチを 0 にしてください（マイナーかメジャーを上げる。パッチは修正フェーズで使います）。`);
     } else if (!release && !hasBranch(product, before)) {
       errors.push(`VERSION の ${product} を上げる前に、release/${product}/v${before} を作ってください（Actions の「Normal Release Preparation」を使うと順番どおりに進みます）。`);
@@ -197,18 +220,18 @@ function checkReleaseLabels({ baseBranch, labels, affectedProducts, versionFile,
 // リリースブランチにマージした PR は、そのブランチのバージョンまで。
 // cherry-pick ラベルの PR は、元の PR の変更を運ぶものなので数えない。ブランチ名では判定しない。
 // pull: { base, head, labels }（labels はラベルの名前）
-function belongsTo(pull, product, version) {
+function belongsTo(pull: LabeledPullRequest, product: string, version: string): boolean {
   if (pull.labels.includes('cherry-pick')) return false;
   const base = parseReleaseBranch(pull.base);
   if (pull.base !== 'main' && !(base?.product === product && compareVersions(version, base.version) <= 0)) return false;
   return extractReleaseLabels(pull.labels, [product]).some((label) =>
-    parseVersion(version)[2] === 0 ? compareVersions(label.version, version) <= 0 : label.version === version,
+    parseVersion(version)![2] === 0 ? compareVersions(label.version, version) <= 0 : label.version === version,
   );
 }
 
 // マージされた PR（pull: { base, head, labels }）の変更を cherry-pick するブランチを、今あるリリースブランチ（branches）から決める。
 // 変更が入るべきバージョン（belongsTo）のブランチのうち、マージ先以外。
-function findCherryPickTargets(pull, branches) {
+function findCherryPickTargets(pull: LabeledPullRequest, branches: string[]): string[] {
   return branches
     .filter((name) => {
       const branch = parseReleaseBranch(name);
@@ -219,9 +242,9 @@ function findCherryPickTargets(pull, branches) {
 
 // リリースの準備（開発ルールの「main ブランチにおいて機能の開発は終了しリリース前の準備フェーズに入りたい場合」）で、
 // main の今のバージョンから作るリリースブランチと、次のバージョン（bump は minor か major）とそのリリースラベルを決める。
-function planNormalReleasePrep({ versionFile, product, bump }) {
+function planNormalReleasePrep({ versionFile, product, bump }: { versionFile: string; product: string; bump: string }) {
   const currentVersion = parseVersionFile(versionFile)[product];
-  const [major, minor] = parseVersion(currentVersion);
+  const [major, minor] = parseVersion(currentVersion)!;
   const nextVersion = bump === 'major' ? `${major + 1}.0.0` : `${major}.${minor + 1}.0`;
   return {
     currentVersion,
@@ -234,14 +257,14 @@ function planNormalReleasePrep({ versionFile, product, bump }) {
 
 // 修正フェーズ（開発ルールの「リリース済みのバージョンに対しての修正フェーズに入りたい場合」）で、
 // 製品の最新のリリースタグ（<製品名>/vX.Y.Z。rc などは除く）と、そこから作るリリースブランチ（次のパッチバージョン）を決める。
-function planHotfixReleasePrep({ product, tags }) {
+function planHotfixReleasePrep({ product, tags }: { product: string; tags: string[] }) {
   const prefix = `${product}/v`;
   const released = tags.filter((tag) => tag.startsWith(prefix) && parseVersion(tag.slice(prefix.length))).map((tag) => tag.slice(prefix.length));
   if (released.length === 0) {
     return { error: `${product} のリリースタグ（${product}/vX.Y.Z）がまだありません。` };
   }
-  const releasedVersion = released.sort(compareVersions).at(-1);
-  const [major, minor, patch] = parseVersion(releasedVersion);
+  const releasedVersion = released.sort(compareVersions).at(-1)!;
+  const [major, minor, patch] = parseVersion(releasedVersion)!;
   const nextVersion = `${major}.${minor}.${patch + 1}`;
   return {
     releasedTag: `${product}/v${releasedVersion}`,
@@ -254,7 +277,7 @@ function planHotfixReleasePrep({ product, tags }) {
 
 // リリース手順（開発ルールの「リリース手順」）で打つタグを、リリースブランチの名前と今あるタグから決める。
 // rc タグは <製品名>/vX.Y.Z-rc.N（N は 1 から順に）、リリースタグは <製品名>/vX.Y.Z。
-function planRelease({ branch, tags }) {
+function planRelease({ branch, tags }: { branch: string; tags: string[] }) {
   const release = parseReleaseBranch(branch);
   if (!release) {
     return { error: `${branch} はリリースブランチ（release/<製品名>/vX.Y.Z）ではありません。Use workflow from でリリースブランチを選んで実行してください。` };
@@ -273,14 +296,14 @@ function planRelease({ branch, tags }) {
 }
 
 // VERSION ファイルの、その製品の行だけを書き換える（コメントやほかの行はそのまま）。
-function setVersion(versionFile, product, version) {
+function setVersion(versionFile: string, product: string, version: string): string {
   return versionFile
     .split('\n')
     .map((line) => (line.trim().split('/')[0] === product && !line.trim().startsWith('#') ? `${product}/${version}` : line))
     .join('\n');
 }
 
-module.exports = {
+export {
   belongsTo,
   checkReleaseLabels,
   cherryPickBranch,

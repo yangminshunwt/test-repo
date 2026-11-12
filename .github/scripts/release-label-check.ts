@@ -6,17 +6,16 @@
 //   main に入る中身は下の merge_group で確かめる）。
 // - merge_group（マージキュー）：マージ前の中身は、マージグループの親（マージ先に、キューで前にある PR を足したもの）。
 //   マージグループのコミットがそのままマージ先に入るので、手元でマージしても中身は変わらない。親からの変更は、この PR の変更だけになる。
-'use strict';
-
-const { git, localReleaseBranches } = require('./github-helpers.js');
-const { checkReleaseLabels, findAffectedProducts, parseMergeQueueBranch, parseVersionFile } = require('./rules.js');
+import type { WorkflowInput, Core } from './github.ts';
+import { git, localReleaseBranches } from './github-helpers.ts';
+import { checkReleaseLabels, findAffectedProducts, parseMergeQueueBranch, parseVersionFile } from './rules.ts';
 
 // PR の今のマージ先とラベル（イベントの後に変わっていても今の状態で判定するため、API で取り直す）と、
 // マージ前の中身（before）と、作業場所の先頭とマージ前の中身との分かれ目（paths-filter が変更を探す起点）を出力する。
-async function findBase({ github, context, core }) {
+async function findBase({ github, context, core }: WorkflowInput) {
   const group = context.payload.merge_group;
-  const number = group ? parseMergeQueueBranch(group.head_ref) : context.payload.pull_request.number;
-  const { data: pr } = await github.rest.pulls.get({ ...context.repo, pull_number: number });
+  const number = group ? parseMergeQueueBranch(group.head_ref) : context.payload.pull_request!.number;
+  const { data: pr } = await github.rest.pulls.get({ ...context.repo, pull_number: number! });
   const baseRef = group ? group.base_ref.replace(/^refs\/heads\//, '') : pr.base.ref;
   const before = group ? group.base_sha : git('rev-parse', `refs/remotes/origin/${baseRef}`);
   core.setOutput('base_ref', baseRef);
@@ -25,11 +24,11 @@ async function findBase({ github, context, core }) {
   core.setOutput('labels', JSON.stringify(pr.labels.map((label) => label.name)));
 }
 
-async function check({ core }) {
+async function check({ core }: { core: Pick<Core, 'summary' | 'warning' | 'error' | 'setFailed'> }) {
   const env = process.env;
-  const baseBranch = env.BASE_REF;
-  const before = env.BEFORE;
-  const labels = JSON.parse(env.LABELS);
+  const baseBranch = env.BASE_REF!;
+  const before = env.BEFORE!;
+  const labels: string[] = JSON.parse(env.LABELS!);
   let merged;
   try {
     merged = git('merge-tree', '--write-tree', before, 'HEAD').split('\n')[0];
@@ -38,7 +37,7 @@ async function check({ core }) {
   }
   const versionFile = git('show', `${merged}:VERSION`);
   const affected = findAffectedProducts({
-    matched: JSON.parse(env.AFFECTED_PRODUCTS),
+    matched: JSON.parse(env.AFFECTED_PRODUCTS!),
     products: Object.keys(parseVersionFile(versionFile)),
     allFileCount: Number(env.ALL_FILE_COUNT),
     listedFileCount: Number(env.LISTED_FILE_COUNT),
@@ -68,13 +67,13 @@ async function check({ core }) {
   if (errors.length > 0) core.setFailed(`リリースラベルのルールを満たしていません（${errors.length} 件）。`);
 }
 
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 // release-label-recheck.yml から呼ぶ。ラベルのチェックの結果は、マージ先の VERSION と今あるリリースブランチでも変わるが、
 // それらが変わっても PR のイベントは起きない。そこで、リリースブランチを作ったり削除したりしたとき（create・delete）と、
 // main やリリースブランチの VERSION が変わったとき（push）に、影響する開いている PR の、今の先頭での最後のチェックをやり直す。
 // ラベルは変えない（ラベルは PR を出した人が決めるもの）。
-async function recheck({ github, context, core }) {
+async function recheck({ github, context, core }: WorkflowInput) {
   const repo = context.repo;
   // push はそのブランチに向けた PR、リリースブランチの create・delete は main とリリースブランチに向けたすべての PR
   const pushed = context.eventName === 'push' ? context.ref.replace(/^refs\/heads\//, '') : null;
@@ -95,7 +94,7 @@ async function recheck({ github, context, core }) {
       await github.rest.actions.reRunWorkflow({ ...repo, run_id: run.id });
       core.info(`#${pull.number}：ラベルのチェックをやり直しました（実行 ${run.id}）。`);
     } catch (error) {
-      failed.push(`#${pull.number}（${error.message}）`);
+      failed.push(`#${pull.number}（${(error as Error).message}）`);
     }
   }
   if (failed.length > 0) {
@@ -103,4 +102,4 @@ async function recheck({ github, context, core }) {
   }
 }
 
-module.exports = { findBase, check, recheck };
+export { findBase, check, recheck };

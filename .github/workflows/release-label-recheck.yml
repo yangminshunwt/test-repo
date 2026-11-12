@@ -35,5 +35,5 @@ jobs:
         with:
           retries: 3 # GitHub API の一時的なエラー（5xx）はやり直す
           script: |
-            const { recheck } = require('./.github/scripts/release-label-check.js')
+            const { recheck } = require('./.github/scripts/release-label-check.ts')
             await recheck({ github, context, core })

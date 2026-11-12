@@ -2,16 +2,15 @@
 // 作業場所に、実行したリリースブランチをすべての履歴（ほかのブランチとタグも）つきで取ってある。
 // コミット・ブランチ・タグ・VERSION はこのチェックアウトから読み、PR の一覧とラベルは API から読む。ブランチは、チェックアウトした
 // 先頭のときだけ削除する（そのあとに入った PR があれば削除できず、やり直しで読み直す）。
-'use strict';
+import type { WorkflowInput, GitHub, Repository, Context } from './github.ts';
+import { listMergedPulls, missingChanges } from './changes.ts';
+import { deleteBranchIfAt, git, prList, report } from './github-helpers.ts';
+import { compareVersions, parseVersionFile, planRelease } from './rules.ts';
 
-const { listMergedPulls, missingChanges } = require('./changes.js');
-const { deleteBranchIfAt, git, prList, report } = require('./github-helpers.js');
-const { compareVersions, parseVersionFile, planRelease } = require('./rules.js');
-
-const commitOf = (ref) => git('rev-parse', `${ref}^{commit}`);
+const commitOf = (ref: string) => git('rev-parse', `${ref}^{commit}`);
 
 // ref の VERSION の、その製品のバージョン（読めなければ null）
-function versionAt(ref, product) {
+function versionAt(ref: string, product: string): string | null {
   try {
     return parseVersionFile(git('show', `${ref}:VERSION`))[product] ?? null;
   } catch {
@@ -19,13 +18,13 @@ function versionAt(ref, product) {
   }
 }
 
-function loadPlan(context) {
+function loadPlan(context: Context) {
   const branch = context.ref.replace(/^refs\/heads\//, '');
   const tags = git('tag', '--list').split('\n').filter(Boolean);
   return { branch, plan: planRelease({ branch, tags }) };
 }
 
-async function createTag(github, repo, name, sha, message) {
+async function createTag(github: GitHub, repo: Repository, name: string, sha: string, message: string) {
   const { data: tag } = await github.rest.git.createTag({ ...repo, tag: name, message, object: sha, type: 'commit' });
   await github.rest.git.createRef({ ...repo, ref: `refs/tags/${name}`, sha: tag.sha });
 }
@@ -33,17 +32,17 @@ async function createTag(github, repo, name, sha, message) {
 // rc もリリースも、main の VERSION を上げてから行う（開発フェーズの入り方の順番）。上げる前にリリースしてブランチを消すと、
 // VERSION を上げる PR が「上げる前のバージョンのリリースブランチがない」で通らなくなって main がこのバージョンのままになり、
 // main の PR にはリリース済みのこのバージョンのラベルしか付けられず（次のバージョンは VERSION より新しい）、変更がどこにも入らなくなる。
-function mainNotBumped(plan) {
+function mainNotBumped(plan: { product: string; version: string }) {
   const main = versionAt('origin/main', plan.product);
   if (main && compareVersions(main, plan.version) > 0) return null;
   return `main の VERSION の ${plan.product} が ${main} のままです。先に main の VERSION を上げる PR（Normal Release Preparation が作ったもの）をマージしてください。`;
 }
 
 // 手順 1：リリースブランチの先頭に、次の rc タグを打つ（このリリースに入るべき変更がすべて入っていることを確かめてから）。
-async function releaseCandidate({ github, context, core }) {
+async function releaseCandidate({ github, context, core }: WorkflowInput) {
   const repo = context.repo;
   const { branch, plan } = loadPlan(context);
-  if (plan.error) return core.setFailed(plan.error);
+  if ('error' in plan) return core.setFailed(plan.error!);
   if (plan.released) return core.setFailed(`${plan.releaseTag} はもうリリースされています。`);
   const head = git('rev-parse', 'HEAD');
   const error =
@@ -66,7 +65,7 @@ async function releaseCandidate({ github, context, core }) {
 }
 
 // commit に入力した SHA を、このブランチの履歴にあるコミットにする（なければ null）
-function resolveCommit(input) {
+function resolveCommit(input: string): string | null {
   if (!/^[0-9a-f]{7,40}$/i.test(input)) return null;
   try {
     const sha = commitOf(input);
@@ -79,12 +78,13 @@ function resolveCommit(input) {
 
 // リリースしたバージョンのリリースラベルをアーカイブする（ラベルを選ぶ画面に出なくなる）。
 // ラベルの決まりはリリースブランチがあるかで判断していて、これには頼っていないので、できなくても進める。
-async function archiveLabel(github, repo, label) {
+async function archiveLabel(github: GitHub, repo: Repository, label: string) {
   try {
-    await github.rest.issues.updateLabel({ ...repo, name: label, archived: true });
+    const update = { ...repo, name: label, archived: true };
+    await github.rest.issues.updateLabel(update);
     return `ラベル ${label} をアーカイブしました。`;
   } catch (error) {
-    return `ラベル ${label} はアーカイブできませんでした（${error.message}）。`;
+    return `ラベル ${label} はアーカイブできませんでした（${(error as Error).message}）。`;
   }
 }
 
@@ -92,10 +92,10 @@ async function archiveLabel(github, repo, label) {
 // リリースしたコミットは、commit に入力したもの、なければ最後の rc。リリースは、リリースタグが指すコミットのこと。
 // それより後にブランチに入ったコミット、開いている PR、入るはずなのに入っていない変更は、このリリースに入っていないものとして
 // 書き出してから（ブランチを消したあとは、やり直せないため）、ブランチを削除する。
-async function release({ github, context, core }) {
+async function release({ github, context, core }: WorkflowInput) {
   const repo = context.repo;
   const { branch, plan } = loadPlan(context);
-  if (plan.error) return core.setFailed(plan.error);
+  if ('error' in plan) return core.setFailed(plan.error!);
 
   let released;
   const lines = [];
@@ -147,4 +147,4 @@ async function release({ github, context, core }) {
   if (problems.length > 0) core.setFailed(problems.join('\n'));
 }
 
-module.exports = { releaseCandidate, release };
+export { releaseCandidate, release };

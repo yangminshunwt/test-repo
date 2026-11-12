@@ -1,18 +1,16 @@
-'use strict';
-
-// changes.js の「変更がコミットに入っているか」を、一時的な git リポジトリで確かめる（changes.js は今の場所で git を動かす）。
-const test = require('node:test');
-const assert = require('node:assert/strict');
-const { execFileSync } = require('child_process');
-const fs = require('fs');
-const os = require('os');
-const path = require('path');
-const { containsChange, missingChanges } = require('./changes.js');
+// changes.ts の「変更がコミットに入っているか」を、一時的な git リポジトリで確かめる（changes.ts は今の場所で git を動かす）。
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { containsChange, missingChanges } from './changes.ts';
 
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'changes-test-'));
-const git = (...args) => execFileSync('git', ['-C', dir, '-c', 'user.name=t', '-c', 'user.email=t@example.com', ...args], { encoding: 'utf8' }).trim();
+const git = (...args: string[]) => execFileSync('git', ['-C', dir, '-c', 'user.name=t', '-c', 'user.email=t@example.com', ...args], { encoding: 'utf8' }).trim();
 // parent の上で files を書き換えたコミットを作り、その SHA を返す（ブランチは動かさない）
-function commit(parent, files, message) {
+function commit(parent: string, files: Record<string, string>, message: string) {
   git('checkout', '-q', '--detach', parent);
   for (const [file, content] of Object.entries(files)) fs.writeFileSync(path.join(dir, file), content);
   git('add', '-A');

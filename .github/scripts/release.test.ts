@@ -1,17 +1,16 @@
-'use strict';
-
+import { mockCore, mockContext, mockGitHub } from './test-helpers.ts';
 // 正式タグを基準にした修正ブランチで、rc の欠落チェックを確かめる。GitHub API は呼ばない。
-const test = require('node:test');
-const assert = require('node:assert/strict');
-const { execFileSync } = require('child_process');
-const fs = require('fs');
-const os = require('os');
-const path = require('path');
-const { releaseCandidate } = require('./release.js');
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { releaseCandidate } from './release.ts';
 
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'release-test-'));
-const git = (...args) => execFileSync('git', ['-C', dir, '-c', 'user.name=t', '-c', 'user.email=t@example.com', ...args], { encoding: 'utf8' }).trim();
-function commit(parent, files) {
+const git = (...args: string[]) => execFileSync('git', ['-C', dir, '-c', 'user.name=t', '-c', 'user.email=t@example.com', ...args], { encoding: 'utf8' }).trim();
+function commit(parent: string | null, files: Record<string, string>) {
   if (parent) git('checkout', '-q', '--detach', parent);
   for (const [file, content] of Object.entries(files)) fs.writeFileSync(path.join(dir, file), content);
   git('add', '-A');
@@ -32,24 +31,24 @@ test.after(() => {
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
-async function runRc(label) {
-  const tags = [];
-  const refs = [];
-  const failures = [];
+async function runRc(label: string) {
+  const tags: { tag: string; object: string }[] = [];
+  const refs: { ref: string }[] = [];
+  const failures: string[] = [];
   const summary = { addHeading: () => summary, addList: () => summary, write: async () => {} };
   await releaseCandidate({
-    context: { repo: { owner: 'o', repo: 'r' }, ref: 'refs/heads/release/product-a/v1.3.1' },
-    core: { setFailed: (message) => failures.push(message), info() {}, summary },
-    github: {
+    context: mockContext({ repo: { owner: 'o', repo: 'r' }, ref: 'refs/heads/release/product-a/v1.3.1' }),
+    core: mockCore({ setFailed: (message: string | Error) => failures.push(String(message)), info() {}, summary }),
+    github: mockGitHub({
       graphql: async () => ({ repository: { pullRequests: {
         pageInfo: { hasNextPage: false },
         nodes: [{ number: 100, baseRefName: 'main', headRefName: 'fix', mergeCommit: { oid: original }, labels: { nodes: [{ name: label }] } }],
       } } }),
       rest: { git: {
-        createTag: async (args) => { tags.push(args); return { data: { sha: 'tag-object' } }; },
-        createRef: async (args) => { refs.push(args); },
+        createTag: async (args: { tag: string; object: string }) => { tags.push(args); return { data: { sha: 'tag-object' } }; },
+        createRef: async (args: { ref: string }) => { refs.push(args); },
       } },
-    },
+    }),
   });
   return { tags, refs, failures };
 }

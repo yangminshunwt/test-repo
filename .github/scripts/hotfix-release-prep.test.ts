@@ -1,0 +1,30 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { hasReleaseAutomation } from './hotfix-release-prep.ts';
+
+test('Hotfix Prep は TypeScript 移行前後のタグを受け入れ、自動化導入前のタグは拒む', (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hotfix-prep-test-'));
+  const cwd = process.cwd();
+  t.after(() => { process.chdir(cwd); fs.rmSync(dir, { recursive: true, force: true }); });
+  const git = (...args: string[]) => execFileSync('git', ['-C', dir, '-c', 'user.name=t', '-c', 'user.email=t@example.com', ...args], { encoding: 'utf8' }).trim();
+  git('init', '-q');
+  git('commit', '-qm', 'Before automation', '--allow-empty');
+  const before = git('rev-parse', 'HEAD');
+  fs.mkdirSync(path.join(dir, '.github/scripts'), { recursive: true });
+  fs.writeFileSync(path.join(dir, '.github/scripts/changes.js'), '// JavaScript\n');
+  git('add', '.');
+  git('commit', '-qm', 'JavaScript automation');
+  const javascript = git('rev-parse', 'HEAD');
+  fs.renameSync(path.join(dir, '.github/scripts/changes.js'), path.join(dir, '.github/scripts/changes.ts'));
+  git('add', '-A');
+  git('commit', '-qm', 'TypeScript automation');
+  const typescript = git('rev-parse', 'HEAD');
+  process.chdir(dir);
+  assert.equal(hasReleaseAutomation(before), false);
+  assert.equal(hasReleaseAutomation(javascript), true);
+  assert.equal(hasReleaseAutomation(typescript), true);
+});
