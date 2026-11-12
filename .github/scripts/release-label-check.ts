@@ -1,29 +1,21 @@
 // release-label-check.yml と ci.yml から actions/github-script で呼ぶ。
-// Label Check はテスト用マージコミット、CI は PR の先頭を取得する。キューでは両方とも合成済みコミットを使う。
-import type { WorkflowInput, Core } from './github.ts';
+import type { WorkflowInput } from './github.ts';
 import { git, localReleaseBranches } from './github-helpers.ts';
 import { checkReleaseLabels, findAffectedProducts, parseMergeQueueBranch, parseVersionFile } from './rules.ts';
 
-// PR の今のマージ先とラベル（イベントの後に変わっていても今の状態で判定するため、API で取り直す）と、
-// マージ前の中身（before）と paths-filter が変更を探す起点（base_sha）を出力する。
-async function findBase({ github, context, core, mergedCheckout = false }: WorkflowInput & { mergedCheckout?: boolean }) {
+// 差分と変更前の VERSION は、PR のテスト用マージコミットの第 1 親（キューでは base_sha）から調べる。
+function findBase({ context, core }: Pick<WorkflowInput, 'context' | 'core'>) {
+  core.setOutput('base_sha', context.payload.merge_group?.base_sha ?? git('rev-parse', 'HEAD^1'));
+}
+
+async function check({ github, context, core }: WorkflowInput) {
+  // 再実行でも現在のマージ先とラベルを使う。
   const group = context.payload.merge_group;
   const number = group ? parseMergeQueueBranch(group.head_ref) : context.payload.pull_request!.number;
   const { data: pr } = await github.rest.pulls.get({ ...context.repo, pull_number: number! });
-  const baseRef = group ? group.base_ref.replace(/^refs\/heads\//, '') : pr.base.ref;
-  // テスト用マージコミットの第 1 親は、そのコミットを作ったときのマージ先。CI は従来どおり現在のマージ先と比較する。
-  const before = group ? group.base_sha : git('rev-parse', mergedCheckout ? 'HEAD^1' : `refs/remotes/origin/${baseRef}`);
-  core.setOutput('base_ref', baseRef);
-  core.setOutput('before', before);
-  core.setOutput('base_sha', mergedCheckout ? before : git('merge-base', 'HEAD', before));
-  core.setOutput('labels', JSON.stringify(pr.labels.map((label) => label.name)));
-}
-
-function check({ core }: { core: Pick<Core, 'warning' | 'error' | 'setFailed'> }) {
+  const baseBranch = group ? group.base_ref.replace(/^refs\/heads\//, '') : pr.base.ref;
+  const labels = pr.labels.map((label) => label.name);
   const env = process.env;
-  const baseBranch = env.BASE_REF!;
-  const before = env.BEFORE!;
-  const labels: string[] = JSON.parse(env.LABELS!);
   const versionFile = git('show', 'HEAD:VERSION');
   const affected = findAffectedProducts({
     matched: JSON.parse(env.AFFECTED_PRODUCTS!),
@@ -35,7 +27,7 @@ function check({ core }: { core: Pick<Core, 'warning' | 'error' | 'setFailed'> }
     labels,
     affectedProducts: affected.products,
     versionFile,
-    baseVersionFile: git('show', `${before}:VERSION`),
+    baseVersionFile: git('show', `${env.BASE_SHA}:VERSION`),
     branches: localReleaseBranches(),
   });
 
