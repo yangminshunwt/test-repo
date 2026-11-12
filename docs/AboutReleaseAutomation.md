@@ -94,7 +94,7 @@ Normal Release Preparation と Tag Creation は、同じ定義を使う（`rules
 
 - `cherry-pick.yml` に、準備、PR 作成、ラベル設定、結果確認の順番を記す。PR 作成、空変更のスキップ、コンフリクト時の draft、結果のまとめは `korthout/backport-action` に任せる。action が成功扱いでも `was_successful` が true でなければ、最後のステップでワークフローを失敗にする。
 - Cherry-Pick の `prepare` は、現在の PR とブランチを API で読み、ラベルのルールに従って行き先を選び、出力する。読み取り権限だけを使い、行き先がなければ App のトークンも作らない。
-- 自動化の実装と単体テストは `.github/scripts/` の TypeScript に統一する。Cherry-Pick は `cherry-pick/workflow.ts` を YAML から呼ぶ。`targets.ts` は行き先の選択、`labels.ts` はラベル、`github.ts` は共通の型とラベル設定時の PR 検索を担当する。Cherry-Pick の環境変数とステップ出力は `workflow.ts` で扱い、各処理には引数で渡す。
+- 自動化の実装と単体テストは `.github/scripts/` の TypeScript に統一する。Cherry-Pick は `cherry-pick/workflow.ts` を YAML から呼ぶ。`prepare` が PR とブランチを読み、`rules.ts` の `findCherryPickTargets` で行き先を絞る。`labels.ts` はラベル、`github.ts` は共通の型とラベル設定時の PR 検索を担当する。Cherry-Pick の環境変数とステップ出力は `workflow.ts` で扱う。
 - 実行時は `actions/github-script` の Node 24 が TypeScript を直接読む。実行用の依存パッケージのインストールや JavaScript の生成は不要。`package.json` とロックファイルは型チェック用で、CI の `script test` でも型チェックを行う。
 - リポジトリのルートで、Node 24 を使って次を実行する。GitHub を変更する回帰スクリプトは実行しない。
 
