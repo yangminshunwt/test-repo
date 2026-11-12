@@ -1,30 +1,28 @@
-'use strict';
-
 // 製品名の元は VERSION ファイル。製品名を書いているほかの場所（製品のパス設定、Normal Release Preparation と
 // Hotfix Release Preparation の選択肢）が、VERSION の製品と完全に一致しているかを確かめる。
 // 製品を足したり消したりするときは、これらを同じ PR で直す。
-const test = require('node:test');
-const assert = require('node:assert/strict');
-const fs = require('fs');
-const path = require('path');
-const { parseVersionFile } = require('./rules.js');
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+import { parseVersionFile } from './rules.ts';
 
-const root = path.join(__dirname, '..', '..');
-const read = (file) => fs.readFileSync(path.join(root, file), 'utf8');
+const root = path.join(import.meta.dirname, '..', '..');
+const read = (file: string) => fs.readFileSync(path.join(root, file), 'utf8');
 const products = Object.keys(parseVersionFile(read('VERSION'))).sort();
 
 // .github/product-paths.yml の、製品以外のフィルタ（増やしたら、ここにも足す）
 const HELPER_FILTERS = ['all', 'common', 'listed', 'none'];
 
 // YAML の 1 行のリスト（[a, b, c]）を配列にする
-function flowList(text) {
+function flowList(text: string) {
   return text
     .split(',')
     .map((item) => item.trim())
     .filter(Boolean);
 }
 
-function assertSameProducts(actual, where) {
+function assertSameProducts(actual: string[], where: string) {
   assert.deepEqual(actual.sort(), products, `${where}（${actual.join(', ')}）が VERSION の製品（${products.join(', ')}）と一致しません`);
 }
 
@@ -35,7 +33,7 @@ test('製品のパス設定の製品のフィルタと listed が、VERSION の�
     filters.filter((filter) => !HELPER_FILTERS.includes(filter)),
     '.github/product-paths.yml の製品のフィルタ',
   );
-  // all（すべてのファイル）と listed の件数の違いで、どの製品にも書かれていないパスを見つけている（rules.js の findAffectedProducts）
+  // all（すべてのファイル）と listed の件数の違いで、どの製品にも書かれていないパスを見つけている（rules.ts の findAffectedProducts）
   assert.match(paths, /^all: \['\*\*'\]$/m, ".github/product-paths.yml に all: ['**'] がありません");
   const listed = /^listed:\s*\[([^\]]*)\]/m.exec(paths);
   assert.ok(listed, '.github/product-paths.yml に listed がありません');

@@ -1,0 +1,14 @@
+{
+  "name": "release-automation",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@actions/core": "3.0.1",
+    "@actions/github": "9.1.1",
+    "@types/node": "24.19.2",
+    "typescript": "7.0.2"
+  }
+}
