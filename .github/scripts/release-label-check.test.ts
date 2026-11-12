@@ -54,8 +54,7 @@ test.after(() => {
 function fakeCore() {
   const outputs: Record<string, unknown> = {};
   const failures: string[] = [];
-  const summary = { addHeading: () => summary, addTable: () => summary, addList: () => summary, write: async () => summary };
-  return mockCore({ outputs, failures, summary, setOutput: (name: string, value: unknown) => (outputs[name] = value), setFailed: (message: string | Error) => failures.push(String(message)), warning() {}, error() {} });
+  return mockCore({ outputs, failures, setOutput: (name: string, value: unknown) => (outputs[name] = value), setFailed: (message: string | Error) => failures.push(String(message)), warning() {}, error() {} });
 }
 // number の PR だけを返す API
 const fakeGithub = (number: number, labels: string[], base = 'main') => mockGitHub({
@@ -77,8 +76,7 @@ async function runCheck(before: string, labels: string[], baseBranch = 'main') {
     BEFORE: before,
     LABELS: JSON.stringify(labels),
     AFFECTED_PRODUCTS: JSON.stringify(['product-a']),
-    ALL_FILE_COUNT: '1',
-    LISTED_FILE_COUNT: '1',
+    HAS_UNLISTED_FILES: 'false',
   });
   await check({ core });
   return core.failures;

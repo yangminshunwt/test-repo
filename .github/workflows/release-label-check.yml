@@ -54,9 +54,8 @@ jobs:
           BEFORE: ${{ steps.base.outputs.before }}
           LABELS: ${{ steps.base.outputs.labels }}
           AFFECTED_PRODUCTS: ${{ steps.products.outputs.changes }}
-          ALL_FILE_COUNT: ${{ steps.products.outputs.all_count }}
-          LISTED_FILE_COUNT: ${{ steps.products.outputs.listed_count }}
+          HAS_UNLISTED_FILES: ${{ fromJSON(steps.products.outputs.all_count) > fromJSON(steps.products.outputs.listed_count) }}
         with:
           script: |
             const { check } = require('./.github/scripts/release-label-check.ts')
-            await check({ core })
+            check({ core })

@@ -19,7 +19,7 @@ async function findBase({ github, context, core, mergedCheckout = false }: Workf
   core.setOutput('labels', JSON.stringify(pr.labels.map((label) => label.name)));
 }
 
-async function check({ core }: { core: Pick<Core, 'summary' | 'warning' | 'error' | 'setFailed'> }) {
+function check({ core }: { core: Pick<Core, 'warning' | 'error' | 'setFailed'> }) {
   const env = process.env;
   const baseBranch = env.BASE_REF!;
   const before = env.BEFORE!;
@@ -28,8 +28,7 @@ async function check({ core }: { core: Pick<Core, 'summary' | 'warning' | 'error
   const affected = findAffectedProducts({
     matched: JSON.parse(env.AFFECTED_PRODUCTS!),
     products: Object.keys(parseVersionFile(versionFile)),
-    allFileCount: Number(env.ALL_FILE_COUNT),
-    listedFileCount: Number(env.LISTED_FILE_COUNT),
+    hasUnlistedFiles: env.HAS_UNLISTED_FILES === 'true',
   });
   const { errors } = checkReleaseLabels({
     baseBranch,
@@ -40,17 +39,6 @@ async function check({ core }: { core: Pick<Core, 'summary' | 'warning' | 'error
     branches: localReleaseBranches(),
   });
 
-  await core.summary
-    .addHeading('リリースラベルのチェック', 3)
-    .addTable([
-      [{ data: '項目', header: true }, { data: '内容', header: true }],
-      ['マージ先', baseBranch],
-      ['影響する製品', affected.products.join('、') || '（なし）'],
-      ['ラベル', labels.join('、') || '（なし）'],
-      ['結果', errors.length === 0 ? 'OK' : `NG（${errors.length} 件）`],
-    ])
-    .addList(affected.reason ? [affected.reason, ...errors] : errors)
-    .write();
   if (affected.reason) core.warning(affected.reason);
   for (const error of errors) core.error(error);
   if (errors.length > 0) core.setFailed(`リリースラベルのルールを満たしていません（${errors.length} 件）。`);
