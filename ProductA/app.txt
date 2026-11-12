@@ -1,2 +1,6 @@
 product-a fix-1794421179
+<<<<<<< HEAD
 f
+=======
+p
+>>>>>>> bc7ff81 (Fix product-a entry in app.txt (#880))
