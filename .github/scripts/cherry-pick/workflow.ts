@@ -12,7 +12,8 @@ export async function prepare({ github, context, core }: WorkflowInput, env = pr
   const { data: pr } = await github.rest.pulls.get({ ...repo, pull_number: Number(env.PR_NUMBER) });
   if (!pr.merged) throw new Error(`#${pr.number} はマージされていません。`);
 
-  const labels = pr.labels.map((label) => label.name);
+  const originalLabels: SourceLabel[] = pr.labels;
+  const labels = originalLabels.map((label) => label.name);
   if (labels.includes('cherry-pick')) {
     core.setOutput('targets', '');
     return;
@@ -35,11 +36,6 @@ export async function prepare({ github, context, core }: WorkflowInput, env = pr
   core.setOutput('targets', targets.join(' '));
   if (targets.length === 0) return;
 
-  const originalLabels: SourceLabel[] = await github.paginate(github.rest.issues.listLabelsOnIssue, {
-    ...repo,
-    issue_number: pr.number,
-    per_page: 100,
-  });
   const activeLabels = originalLabels.filter((label) => !label.archived_at).map((label) => label.name);
   core.setOutput('labels', ['cherry-pick', ...activeLabels].join(','));
 }
