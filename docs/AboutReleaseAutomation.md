@@ -49,11 +49,11 @@ Normal Release Preparation と Tag Creation は、同じ定義を使う（`rules
 ### Cherry-Pick
 
 - 行き先は、ラベルの製品とバージョン以上の、現在ある通常・修正リリースのブランチ。元の PR をリリースブランチにマージした場合は、その製品とバージョンまでに限定し、マージ先自身は除く。`cherry-pick` ラベルの PR は再び送らない。たとえば `main` にマージした `product-a/v1.3.0` の PR は、存在する `release/product-a/v1.3.1` にも候補の PR を作るが、旧ラベルだけではその hotfix の rc に必須の変更にはならない。
-- 既存 PR や取り込み履歴は調べない。空変更の判定は backport-action に任せる。作業ブランチ `cherry-pick-<元の PR の番号>-to-<行き先のブランチ>` がすでにあれば、PR 作成前にエラーで止まる。再実行でも削除・復旧・再利用は自動では行わず、既存のブランチを確認して手動で対応する。
+- コミットの選択は backport-action の `cherry_picking` の既定値 `auto` を使う。空変更の判定や既存の作業ブランチの扱いも action に任せる。
 - cherry-pick の PR は自動化が作り、元の PR のアーカイブされていないラベルをすべて引き継ぐ。他の製品のラベルも残し、再び cherry-pick しないための `cherry-pick` ラベルを付ける。リリースラベルのバージョンは変えない。ラベル設定では PR に付いているリリースラベル以外のラベルは残す。元の PR の担当者を引き継ぎ、マージは人がする。
 - GitHub はアーカイブ済みラベルを新しい PR に追加できないため、そのラベルは引き継がず、アーカイブも解除しない。元の PR のすべてのラベルがアーカイブ済みなら、`cherry-pick` ラベルだけを付ける。手で cherry-pick するときも同じ。
 - コンフリクトしたときは、コンフリクトを含んだ draft の cherry-pick の PR を作り、解き方をその PR にコメントする（元の PR のコメントには、その PR へのリンクだけが出る。メンションはしない）。その PR でコンフリクトを解いてマージする。
-- 失敗したときは、backport-action のコメントと Actions の実行の記録で確認する。追加の通知コメントや作者・マージした人へのメンションは出さない。一部の行き先で失敗したときも、ワークフローは失敗にする。手で cherry-pick するときは、`cherry-pick-<元の PR の番号>-to-<行き先のブランチ>` の名前で作業ブランチを作り、元の PR のアーカイブされていないラベルと `cherry-pick` ラベルを付けて PR を出す。リリースラベルのバージョンは変えない。原因を直し、同名の作業ブランチがないことを確認したら、Actions の「Cherry-Pick」を `main` で、PR の番号を指定して実行し直してもよい（リリースブランチで実行すると、そのブランチの古いワークフローとスクリプトで動く。ほかのブランチでは job が始まらない）。
+- 失敗したときは、backport-action のコメントと Actions の実行の記録で確認する。追加の通知コメントや作者・マージした人へのメンションは出さない。一部の行き先で失敗したときも、ワークフローは失敗にする。手で cherry-pick するときは、`cherry-pick-<元の PR の番号>-to-<行き先のブランチ>` の名前で作業ブランチを作り、元の PR のアーカイブされていないラベルと `cherry-pick` ラベルを付けて PR を出す。リリースラベルのバージョンは変えない。原因を直したら、Actions の「Cherry-Pick」を `main` で、PR の番号を指定して実行し直してもよい（リリースブランチで実行すると、そのブランチの古いワークフローとスクリプトで動く。ほかのブランチでは job が始まらない）。
 - 行き先のブランチがもうない（リリースして削除された）ときは、手での cherry-pick もやり直しも要らない（ブランチも作り直さない）。変更はそのリリースには入っていない。
 
 ### Normal Release Preparation と Hotfix Release Preparation
@@ -93,8 +93,8 @@ Normal Release Preparation と Tag Creation は、同じ定義を使う（`rules
 ### TypeScript とローカル確認
 
 - `cherry-pick.yml` に、準備、PR 作成、ラベル設定、結果確認の順番を記す。PR 作成、空変更のスキップ、コンフリクト時の draft、結果のまとめは `korthout/backport-action` に任せる。action が成功扱いでも `was_successful` が true でなければ、最後のステップでワークフローを失敗にする。
-- Cherry-Pick の準備では、現在のブランチを API で取得し、行き先の選択、同名の作業ブランチの確認、GitHub のマージコミットの関連付け待ちを行う。Git の全履歴やマージ済み PR の一覧は取得しない。準備には読み取り権限だけを使い、行き先がなければ App のトークンも作らない。
-- 自動化の実装と単体テストは `.github/scripts/` の TypeScript に統一する。Cherry-Pick は `cherry-pick/workflow.ts` を YAML から呼ぶ。`targets.ts` は行き先と準備、`labels.ts` はラベル、`github.ts` は共通の型とラベル設定時の PR 検索を担当する。Cherry-Pick の環境変数とステップ出力は `workflow.ts` で扱い、各処理には引数で渡す。
+- Cherry-Pick の `prepare` は、現在の PR とブランチを API で読み、ラベルのルールに従って行き先を選び、出力する。読み取り権限だけを使い、行き先がなければ App のトークンも作らない。
+- 自動化の実装と単体テストは `.github/scripts/` の TypeScript に統一する。Cherry-Pick は `cherry-pick/workflow.ts` を YAML から呼ぶ。`targets.ts` は行き先の選択、`labels.ts` はラベル、`github.ts` は共通の型とラベル設定時の PR 検索を担当する。Cherry-Pick の環境変数とステップ出力は `workflow.ts` で扱い、各処理には引数で渡す。
 - 実行時は `actions/github-script` の Node 24 が TypeScript を直接読む。実行用の依存パッケージのインストールや JavaScript の生成は不要。`package.json` とロックファイルは型チェック用で、CI の `script test` でも型チェックを行う。
 - リポジトリのルートで、Node 24 を使って次を実行する。GitHub を変更する回帰スクリプトは実行しない。
 

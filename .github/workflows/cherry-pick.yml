@@ -1,14 +1,13 @@
 name: Cherry-Pick
 
 # マージされた PR の変更を、リリースラベルが表す範囲のリリースブランチに cherry-pick する PR を作る。
-# pull_request_target はマージ先に関係なく既定ブランチ（main）のワークフローとスクリプトで動く。PR のコードは実行しない。
 on:
   pull_request_target:
     types: [closed]
     branches:
       - main
       - 'release/**'
-  # 失敗した行き先の原因を直したあとに、手でやり直す（Normal Release Preparation も、新しいブランチのために実行する）
+  # 失敗した行き先の原因を直したあとに、手でやり直す
   workflow_dispatch:
     inputs:
       pr_number:
