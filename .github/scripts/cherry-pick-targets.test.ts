@@ -4,7 +4,7 @@ import { prepare } from './cherry-pick/workflow.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-test('prepare は現在のラベルとブランチから行き先だけを出力する', async () => {
+test('prepare は現在のラベルとブランチから行き先と付けるラベルを出力する', async () => {
   const repo = { owner: 'o', repo: 'r' };
   const targets = ['1.3.0', '1.3.1', '1.4.0'].map((version) => `release/product-a/v${version}`);
   const source = { number: 10, merged: true, base: { ref: 'main' }, head: { ref: 'feature' }, labels: [{ name: 'product-a/v1.3.0' }] };
@@ -14,8 +14,10 @@ test('prepare は現在のラベルとブランチから行き先だけを出力
     rest: {
       pulls: { get: async () => ({ data: source }) },
       repos: { listBranches() {} },
+      issues: { listLabelsOnIssue() {} },
     },
     paginate: async (method: unknown) => {
+      if (method === github.rest.issues.listLabelsOnIssue) return source.labels;
       assert.equal(method, github.rest.repos.listBranches);
       return [
         'main', 'feature', 'release/invalid', 'release/product-a/v1.2.9', 'release/product-b/v2.0.0',
@@ -31,8 +33,9 @@ test('prepare は現在のラベルとブランチから行き先だけを出力
     core: mockCore({ setOutput: (name: string, value: unknown) => outputs.set(name, value) }),
   };
   await prepare(workflow, { PR_NUMBER: '10' });
-  assert.deepEqual(Object.fromEntries(outputs), { targets: targets.join(' ') });
+  assert.deepEqual(Object.fromEntries(outputs), { targets: targets.join(' '), labels: 'cherry-pick,product-a/v1.3.0' });
 
+  outputs.clear();
   source.labels.push({ name: 'cherry-pick' });
   await prepare(workflow, { PR_NUMBER: '10' });
   assert.deepEqual(Object.fromEntries(outputs), { targets: '' });
@@ -55,14 +58,15 @@ async function targets({ base = 'main', head = 'feature', labels, branches = BRA
     rest: {
       pulls: { get: async () => ({ data: { number: 10, merged: true, base: { ref: base }, head: { ref: head }, labels: labels.map((name) => ({ name })) } }) },
       repos: { listBranches() {} },
+      issues: { listLabelsOnIssue() {} },
     },
-    paginate: async () => branches.map((name) => ({ name })),
+    paginate: async (method: unknown) => (method === github.rest.repos.listBranches ? branches : labels).map((name) => ({ name })),
   });
   let output = '';
   await prepare({
     github,
     context: mockContext({ repo: { owner: 'o', repo: 'r' } }),
-    core: mockCore({ setOutput: (_name: string, value: unknown) => { output = String(value); } }),
+    core: mockCore({ setOutput: (name: string, value: unknown) => { if (name === 'targets') output = String(value); } }),
   }, { PR_NUMBER: '10' });
   return output.split(' ').filter(Boolean);
 }

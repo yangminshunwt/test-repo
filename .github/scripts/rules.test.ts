@@ -3,8 +3,6 @@ import assert from 'node:assert/strict';
 import {
   belongsTo,
   checkReleaseLabels,
-  cherryPickBranch,
-  cherryPickLabels,
   compareVersions,
   findAffectedProducts,
   parseCherryPickBranch,
@@ -52,9 +50,8 @@ test('VERSION ファイルを読む', () => {
   assert.throws(() => parseVersionFile('1.2.3\n'));
 });
 
-test('cherry-pick の PR のブランチ名を作り、元の PR の番号を読む', () => {
-  assert.equal(cherryPickBranch(12, 'release/product-a/v1.4.0'), 'cherry-pick-12-to-release/product-a/v1.4.0');
-  assert.equal(parseCherryPickBranch(cherryPickBranch(12, 'release/product-a/v1.4.0')), 12);
+test('cherry-pick の PR のブランチ名から元の PR の番号を読む', () => {
+  assert.equal(parseCherryPickBranch('cherry-pick-12-to-release/product-a/v1.4.0'), 12);
   assert.equal(parseCherryPickBranch('feature/cherry-pick-12-to-x'), null);
   assert.equal(parseCherryPickBranch('cherry-pick-fix'), null);
 });
@@ -66,19 +63,6 @@ test('マージキューのブランチから PR の番号を読む', () => {
   assert.equal(parseMergeQueueBranch(`refs/heads/gh-readonly-queue/release/product-a/v1.4.0/pr-7-${sha}`), 7);
   assert.equal(parseMergeQueueBranch('refs/heads/main'), null);
   assert.equal(parseMergeQueueBranch(`refs/heads/feature/pr-104-${sha}`), null);
-});
-
-test('cherry-pick のラベル：元の PR の全製品のラベルと通常のラベルを引き継ぐ', () => {
-  const labels = ['product-a/v1.3.0', 'product-b/v2.0.0', 'bug'];
-  assert.deepEqual(cherryPickLabels(labels), ['cherry-pick', ...labels]);
-});
-
-test('cherry-pick のラベル：やり直しではリリースラベルを置き換え、ほかのラベルは残す', () => {
-  const labels = ['product-a/v1.3.0', 'product-b/v2.0.0'];
-  const existing = ['bug', 'cherry-pick', 'product-a/v1.4.0', 'product-b/v2.0.0'];
-  const expected = ['bug', 'cherry-pick', 'product-a/v1.3.0', 'product-b/v2.0.0'];
-  assert.deepEqual(cherryPickLabels(labels, existing), expected);
-  assert.deepEqual(cherryPickLabels(labels, expected), expected);
 });
 
 test('バージョンを数値として比べる', () => {

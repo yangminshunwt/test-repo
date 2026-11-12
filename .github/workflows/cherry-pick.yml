@@ -83,26 +83,15 @@ jobs:
           source_pr_number: ${{ env.PR_NUMBER }}
           target_branches: ${{ steps.prepare.outputs.targets }}
           label_pattern: '' # 行き先は prepare で決めたものだけにする
-          branch_name: cherry-pick-${pull_number}-to-${target_branch} # rules.ts の cherryPickBranch・parseCherryPickBranch と同じ形
+          branch_name: cherry-pick-${pull_number}-to-${target_branch} # rules.ts の parseCherryPickBranch と同じ形
           pull_title: '🍒 [#${pull_number} → ${target_branch}] ${pull_title}'
           pull_description: |-
             #${pull_number} を `${target_branch}` に cherry-pick する PR です。
+          add_labels: ${{ steps.prepare.outputs.labels }}
           copy_assignees: true # 元の PR の担当者を引き継ぐ（担当者がいなければ付けない）
           comment_style: summary
           # コンフリクトしたら、コンフリクトを含んだままの draft PR を作り、解き方をその draft PR にコメントする（元の PR のコメントにはリンクだけが出る）
           experimental: '{"conflict_resolution": "draft_commit_conflicts"}'
-
-      - name: Label cherry-pick pull requests
-        if: ${{ !cancelled() && steps.app-token.outcome == 'success' }}
-        uses: actions/github-script@v9
-        env:
-          TARGETS: ${{ steps.prepare.outputs.targets }}
-        with:
-          retries: 3 # GitHub API の一時的なエラー（5xx）はやり直す
-          github-token: ${{ steps.app-token.outputs.token }}
-          script: |
-            const { label } = require('./.github/scripts/cherry-pick/workflow.ts')
-            await label({ github, context, core })
 
       - name: Check backport result
         # 部分失敗や処理前の終了ではステップが成功になることもあるので、action の集約結果も見る。
