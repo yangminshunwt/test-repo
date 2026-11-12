@@ -230,12 +230,19 @@ function belongsTo(pull: LabeledPullRequest, product: string, version: string): 
 }
 
 // マージされた PR（pull: { base, head, labels }）の変更を cherry-pick するブランチを、今あるリリースブランチ（branches）から決める。
-// 変更が入るべきバージョン（belongsTo）のブランチのうち、マージ先以外。
+// 修正フェーズもラベル以上のバージョンなら候補にする。rc で必須とする belongsTo とは分ける。
 function findCherryPickTargets(pull: LabeledPullRequest, branches: string[]): string[] {
+  if (pull.labels.includes('cherry-pick')) return [];
+  const base = parseReleaseBranch(pull.base);
   return branches
     .filter((name) => {
       const branch = parseReleaseBranch(name);
-      return branch && name !== pull.base && belongsTo(pull, branch.product, branch.version);
+      if (!branch || name === pull.base) return false;
+      if (pull.base !== 'main') {
+        if (!base || base.product !== branch.product) return false;
+        if (compareVersions(branch.version, base.version) > 0) return false;
+      }
+      return extractReleaseLabels(pull.labels, [branch.product]).some((label) => compareVersions(label.version, branch.version) <= 0);
     })
     .sort();
 }

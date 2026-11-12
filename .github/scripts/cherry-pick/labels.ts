@@ -10,11 +10,15 @@ interface SourceLabel {
 
 // 元の PR のラベルをすべて引き継ぎ、cherry-pick を付ける。
 // アーカイブ済みラベルは付けられないので除外し、アーカイブも解除しない。
-// 前の実行で開いた PR も対象にし、リリースラベル以外は残す。
+// 開いている対象 PR に設定し、リリースラベル以外は残す。
 export async function labelPullRequests(
   input: PullRequestInput & { targets: string[] },
 ): Promise<void> {
   const { github, repo, prNumber, targets } = input;
+  const pulls = [];
+  for (const target of targets) pulls.push(...await listCherryPickPulls(input, target));
+  if (pulls.length === 0) return; // 空変更などで PR がなければ、ラベルを読み書きしない。
+
   const originalLabels: SourceLabel[] = await github.paginate(github.rest.issues.listLabelsOnIssue, {
     ...repo,
     issue_number: prNumber,
@@ -31,13 +35,11 @@ export async function labelPullRequests(
     });
   }
 
-  for (const target of targets) {
-    for (const pull of await listCherryPickPulls(input, target, 'open')) {
-      await github.rest.issues.setLabels({
-        ...repo,
-        issue_number: pull.number,
-        labels: cherryPickLabels(labels, pull.labels.map((label) => label.name)),
-      });
-    }
+  for (const pull of pulls) {
+    await github.rest.issues.setLabels({
+      ...repo,
+      issue_number: pull.number,
+      labels: cherryPickLabels(labels, pull.labels.map((label) => label.name)),
+    });
   }
 }

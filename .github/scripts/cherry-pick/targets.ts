@@ -1,77 +1,29 @@
 import timers from 'node:timers/promises';
-import { containsChange, listMergedPulls } from '../changes.ts';
-import { branchHead, deleteBranchIfAt, localReleaseBranches } from '../github-helpers.ts';
+import { branchHead } from '../github-helpers.ts';
 import { cherryPickBranch, findCherryPickTargets } from '../rules.ts';
-import { listCherryPickPulls, type Logger, type PullRequestInput } from './github.ts';
+import type { Logger, PullRequestInput } from './github.ts';
 
-// backport-action の git_committer_email の既定値。
-const AUTOMATION_COMMITTER = 'github-actions[bot]@users.noreply.github.com';
-
-interface PendingTarget {
-  target: string;
-  closedPullHeads: string[];
-}
-
-interface TargetSelection {
-  targets: string[];
-  pending: PendingTarget[];
-  mergeCommit: string;
-}
-
-// targets はラベルを整える行き先。pending は、PR も変更もまだ入っていない行き先。
-// ブランチの一覧と「変更が入っているか」は、どちらもチェックアウトした時点で判断する。
-// その後に作られた通常リリースのブランチは、Normal Release Preparation が追補する。
-export async function selectTargets(input: PullRequestInput & { core: Logger }): Promise<TargetSelection> {
-  const { github, repo, prNumber, core } = input;
+// 現在のリリースブランチから行き先を選ぶ。既存 PR や取り込み履歴は調べない。
+export async function selectTargets({ github, repo, prNumber }: PullRequestInput) {
   const { data: pr } = await github.rest.pulls.get({ ...repo, pull_number: prNumber });
   if (!pr.merged) throw new Error(`#${pr.number} はマージされていません。`);
 
-  // マージ済み PR の merge_commit_sha は、そのマージコミットを指す。
-  const mergeCommit = pr.merge_commit_sha!;
-  const targets: string[] = findCherryPickTargets({
+  const branches = await github.paginate(github.rest.repos.listBranches, { ...repo, per_page: 100 });
+  const targets = findCherryPickTargets({
     base: pr.base.ref,
     head: pr.head.ref,
     labels: pr.labels.map((label) => label.name),
-  }, localReleaseBranches());
-  const pulls = targets.length > 0 ? await listMergedPulls(github, repo) : [];
-  const pending: PendingTarget[] = [];
+  }, branches.map((branch) => branch.name));
 
+  // backport-action に既存の作業ブランチを再利用させない。削除や復旧は自動では行わない。
   for (const target of targets) {
-    const existing = await listCherryPickPulls(input, target, 'all');
-    if (existing.some((pull) => pull.state === 'open' || pull.merged_at)) {
-      core.info(`${target}：cherry-pick の PR があります。`);
-      continue;
-    }
-    if (containsChange(pulls, { number: pr.number, mergeCommit }, `refs/remotes/origin/${target}`)) {
-      core.info(`${target}：変更はもう入っています。`);
-      continue;
-    }
-    pending.push({ target, closedPullHeads: existing.map((pull) => pull.head.sha) });
-    core.info(`${target}：これから cherry-pick します。`);
-  }
-  return { targets, pending, mergeCommit };
-}
-
-// 閉じた PR のブランチか、自動化が残したブランチだけを消す。
-// 人が作ったブランチは残し、backport-action にその中身で PR を作ってもらう。
-// 先頭 SHA を条件に削除するので、読み取った後に追加されたコミットは消さない。
-export async function removeStaleBranches(
-  { github, repo, prNumber, core, pending }: PullRequestInput & { core: Logger; pending: PendingTarget[] },
-): Promise<void> {
-  for (const { target, closedPullHeads } of pending) {
     const branch = cherryPickBranch(prNumber, target);
-    const sha: string | null = await branchHead(github, repo, branch);
-    if (!sha) continue;
-
-    const { data: commit } = await github.rest.git.getCommit({ ...repo, commit_sha: sha });
-    const fromClosedPull = closedPullHeads.includes(sha);
-    const fromAutomation = commit.committer.email === AUTOMATION_COMMITTER;
-    if (!fromClosedPull && !fromAutomation) continue;
-
-    if (await deleteBranchIfAt(github, repo, branch, sha)) {
-      core.info(`${target}：前の実行の残りの ${branch} を消しました。`);
+    if (await branchHead(github, repo, branch)) {
+      throw new Error(`${branch} はすでに存在します。既存のブランチを確認し、手動で対応してください。`);
     }
   }
+  // マージ済み PR の merge_commit_sha は、そのマージコミットを指す。
+  return { targets, mergeCommit: pr.merge_commit_sha! };
 }
 
 // backport-action が squash のコミットを識別できるよう、GitHub の PR とコミットの関連付けを待つ。
