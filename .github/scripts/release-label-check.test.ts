@@ -7,7 +7,7 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { findBase, check } from './release-label-check.ts';
+import { check } from './release-label-check.ts';
 
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'release-label-check-test-'));
 const git = (...args: string[]) => execFileSync('git', ['-C', dir, '-c', 'user.name=t', '-c', 'user.email=t@example.com', ...args], { encoding: 'utf8' }).trim();
@@ -52,9 +52,8 @@ test.after(() => {
 });
 
 function fakeCore() {
-  const outputs: Record<string, unknown> = {};
   const failures: string[] = [];
-  return mockCore({ outputs, failures, setOutput: (name: string, value: unknown) => (outputs[name] = value), setFailed: (message: string | Error) => failures.push(String(message)), warning() {}, error() {} });
+  return mockCore({ failures, setFailed: (message: string | Error) => failures.push(String(message)), warning() {}, error() {} });
 }
 // number の PR だけを返す API
 const fakeGithub = (number: number, labels: string[], base = 'main') => mockGitHub({
@@ -85,13 +84,6 @@ async function runCheck(
   return core.failures;
 }
 
-test('マージキュー：比較基準はイベントの base_sha から取り、PR の情報は読まない', () => {
-  git('checkout', '-q', '--detach', group12);
-  const core = fakeCore();
-  findBase({ context: context({ merge_group: mergeGroup12 }), core });
-  assert.deepEqual(core.outputs, { base_sha: group11 });
-});
-
 test('マージキュー：前に並んでいる PR の変更（VERSION を上げる）を、この PR の変更とみなさない', async () => {
   git('checkout', '-q', '--detach', group12);
   // 1.4.0 のリリースブランチがあるので、#12 に product-a/v1.4.0 を付けてよい（VERSION は変えていない）
@@ -102,17 +94,6 @@ test('マージキュー：前に並んでいる PR の変更（VERSION を上�
   assert.equal((await runCheck(root, ['product-a/v1.4.0'], 'old-base', payload)).length, 1);
 });
 
-test('CI：マージ結果を検査し、その第 1 親から PR 自身の変更を調べる', () => {
-  const head = commit(root, { 'ProductB/app.txt': 'b fix\n' }, 'Fix product-b');
-  const merged = merge(group11, head);
-  const core = fakeCore();
-  findBase({ context: context({ pull_request: { number: 13, head: { sha: head }, base: { sha: root } } }), core });
-  assert.deepEqual(core.outputs, { base_sha: group11 });
-  assert.equal(git('diff', '--name-only', `${core.outputs.base_sha}..HEAD`), 'ProductB/app.txt');
-  assert.equal(git('show', 'HEAD:VERSION'), versionFile('1.5.0').trim());
-  assert.equal(git('rev-parse', 'HEAD'), merged);
-});
-
 test('PR のマージ結果：main 側の VERSION 更新を PR の変更に含めない', async () => {
   const head = commit(root, { 'ProductA/app.txt': 'a fix\n' }, 'Fix product-a');
   const merged = merge(group11, head);
@@ -120,12 +101,9 @@ test('PR のマージ結果：main 側の VERSION 更新を PR の変更に含�
   git('update-ref', 'refs/remotes/origin/main', laterMain);
   git('checkout', '-q', '--detach', merged);
 
-  const core = fakeCore();
-  findBase({ context: context({ pull_request: { number: 14 } }), core });
-  assert.deepEqual(core.outputs, { base_sha: group11 });
-  assert.equal(git('diff', '--name-only', `${core.outputs.base_sha}..HEAD`), 'ProductA/app.txt');
-  assert.deepEqual(await runCheck(String(core.outputs.base_sha), ['product-a/v1.4.0']), []);
-  assert.equal((await runCheck(String(core.outputs.base_sha), ['product-a/v1.6.0'])).length, 1);
+  assert.equal(git('diff', '--name-only', `${group11}..HEAD`), 'ProductA/app.txt');
+  assert.deepEqual(await runCheck(group11, ['product-a/v1.4.0']), []);
+  assert.equal((await runCheck(group11, ['product-a/v1.6.0'])).length, 1);
   git('update-ref', 'refs/remotes/origin/main', root);
 });
 
@@ -146,12 +124,6 @@ test('リリース PR の再確認：新しいテスト用マージコミット�
   const updatedBase = commit(root, { VERSION: versionFile('1.4.1') }, 'Prepare hotfix VERSION');
   git('update-ref', `refs/remotes/origin/${baseBranch}`, updatedBase);
   merge(updatedBase, head);
-  const core = fakeCore();
-  findBase({
-    context: context({ pull_request: { number: 15, base: { sha: root, ref: baseBranch } } }),
-    core,
-  });
-  assert.equal(core.outputs.base_sha, updatedBase);
-  assert.equal(git('diff', '--name-only', `${core.outputs.base_sha}..HEAD`), 'ProductA/app.txt');
-  assert.deepEqual(await runCheck(String(core.outputs.base_sha), labels, baseBranch), []);
+  assert.equal(git('diff', '--name-only', `${updatedBase}..HEAD`), 'ProductA/app.txt');
+  assert.deepEqual(await runCheck(updatedBase, labels, baseBranch), []);
 });

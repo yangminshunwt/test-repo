@@ -37,8 +37,8 @@ jobs:
         uses: actions/github-script@v9
         with:
           script: |
-            const { findBase } = require('./.github/scripts/release-label-check.ts')
-            findBase({ context, core })
+            const { git } = require('./.github/scripts/github-helpers.ts')
+            core.setOutput('base_sha', context.payload.merge_group?.base_sha ?? git('rev-parse', 'HEAD^1'))
 
       # 影響する製品は、ラベルのチェックと同じ設定（.github/product-paths.yml）で決める。
       # 製品の設定に書かれていないパスの変更（all と listed の件数が違う）があれば、すべての製品のテストを動かす。
