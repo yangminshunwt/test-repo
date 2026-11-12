@@ -1,5 +1,5 @@
 // リリースに入るべき変更と、それがコミットに入っているかの判断。
-// Tag Creation、Cherry-Pick、Normal Release Preparation、Hotfix Release Preparation が、この同じ定義を使う。
+// Tag Creation、Cherry-Pick、Normal Release Preparation が、この同じ定義を使う。
 // 入るべきかは rules.js の belongsTo（開発ルールの「リリースラベル」）。git は、すべての履歴を取った作業場所で動かす。
 'use strict';
 
@@ -59,9 +59,9 @@ function missingChanges(pulls, product, version, commit) {
   return pulls.filter((pull) => belongsTo(pull, product, version) && !containsChange(pulls, pull, commit));
 }
 
-// normal-release-prep.yml と hotfix-release-prep.yml から呼ぶ。リリースブランチ（RELEASE_BRANCH。チェックアウトしたときの先頭が BRANCH_SHA）に
+// normal-release-prep.yml から呼ぶ。リリースブランチ（RELEASE_BRANCH。チェックアウトしたときの先頭が BRANCH_SHA）に
 // 入るべきなのに入っていない変更の Cherry-Pick を、PR ごとに実行する。ブランチを作る前に Cherry-Pick が動いた PR
-// （作る間にマージされた PR や、前のリリースに入らなかった PR）のため。Cherry-Pick は、cherry-pick の PR がもうある行き先や、
+// （作る間にマージされた PR）のため。Cherry-Pick は、cherry-pick の PR がもうある行き先や、
 // 変更がもう入っている行き先を飛ばすので、何度実行してもよい。
 async function catchUp({ github, context, core }) {
   const env = process.env;

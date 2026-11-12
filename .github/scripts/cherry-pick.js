@@ -2,8 +2,8 @@
 'use strict';
 
 const { containsChange, listMergedPulls } = require('./changes.js');
-const { branchHead, deleteBranchIfAt, localReleaseBranches } = require('./github-helpers.js');
-const { cherryPickBranch, findCherryPickTargets } = require('./rules.js');
+const { branchHead, deleteBranchIfAt, found, localReleaseBranches } = require('./github-helpers.js');
+const { cherryPickBranch, cherryPickLabels, findCherryPickTargets } = require('./rules.js');
 
 // backport-action が cherry-pick のコミットに使う committer（action.yml の git_committer_email の既定）
 const AUTOMATION_COMMITTER = 'github-actions[bot]@users.noreply.github.com';
@@ -13,9 +13,9 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 function manualGuide(number) {
   return [
-    `手で cherry-pick するときは、行き先のブランチから \`${cherryPickBranch(number, '<行き先のブランチ>')}\` という名前の作業ブランチを作って cherry-pick し、行き先のブランチのバージョンのリリースラベル（例：\`release/<製品名>/vX.Y.Z\` なら \`<製品名>/vX.Y.Z\`）を付けて PR を出してください。この名前にしておくと、自動でやり直したときに重ねて作られません。`,
+    `手で cherry-pick するときは、行き先のブランチから \`${cherryPickBranch(number, '<行き先のブランチ>')}\` という名前の作業ブランチを作って cherry-pick し、元の PR のうち行き先の製品のリリースラベルと \`cherry-pick\` ラベルを付けて PR を出してください。リリースラベルのバージョンは変えません。元のリリースラベルがアーカイブ済みなら、\`cherry-pick\` ラベルだけを付けます。このブランチ名は元の PR との対応に、\`cherry-pick\` ラベルは再び cherry-pick しないために使います。`,
     `原因を直して自動でやり直すときは、Actions の「Cherry-Pick」→「Run workflow」で、PR の番号 ${number} を指定してください。`,
-    '行き先のブランチがもうない（リリースして削除された）ときは、手での cherry-pick もやり直しも要りません（ブランチも作り直さないでください）。変更はそのリリースには入っておらず、修正フェーズに入れるときは Hotfix Release Preparation が自動で cherry-pick します。',
+    '行き先のブランチがもうない（リリースして削除された）ときは、手での cherry-pick もやり直しも要りません（ブランチも作り直さないでください）。変更はそのリリースには入っていません。修正フェーズに入れる変更は、その修正バージョンを指定して PR を出してください。',
   ].join('\n\n');
 }
 
@@ -24,7 +24,7 @@ function cherryPickPulls(github, repo, target, state) {
 }
 
 // 元の PR の cherry-pick 先を決めて出力する（今あるリリースブランチと、変更が入っているかは、どちらもチェックアウトした時点のものを見る。
-// そのあとに作られたブランチには、作った Normal Release Preparation・Hotfix Release Preparation が、入っていない変更の Cherry-Pick を実行する）。
+// そのあとに作られた通常リリースのブランチには、Normal Release Preparation が入っていない変更の Cherry-Pick を実行する）。
 // targets：リリースラベルが表す範囲の、今あるリリースブランチ（cherry-pick の PR にラベルを付ける行き先）
 // branches：そのうち、cherry-pick の PR が開いてもマージされてもいなくて、変更もまだ入っていない行き先（これから cherry-pick する）
 // 前の実行の残りのブランチ（閉じた PR のものか、自動化が作ったもの）は消す。残っていると backport-action がその古い中身で PR を作るため。
@@ -74,13 +74,23 @@ async function waitForMergeLink(github, repo, core, pr) {
   return false;
 }
 
-// cherry-pick の PR に、行き先のブランチのバージョンのリリースラベルを付ける（リリースブランチへの PR にはそのブランチの製品のラベルが要り、
-// 元の PR のバージョンはリリース済みでブランチがないことがあるため）。前の実行で作られた PR にも付けるため、行き先ごとにブランチ名から探す。
+// cherry-pick の PR に、元の PR のうち行き先の製品のリリースラベルと cherry-pick ラベルを付ける。
+// アーカイブ済みのラベルは新しい PR に付けられないので引き継がず、アーカイブも解除しない。
+// 前の実行で作られた PR にも付けるため、行き先ごとにブランチ名から探す。
 async function labelPullRequests({ github, context }) {
   const repo = context.repo;
+  const originalLabels = await github.paginate(github.rest.issues.listLabelsOnIssue, { ...repo, issue_number: prNumber(), per_page: 100 });
+  const labels = originalLabels.filter((label) => !label.archived_at).map((label) => label.name);
+  if (!(await found(github.rest.issues.getLabel({ ...repo, name: 'cherry-pick' })))) {
+    await github.rest.issues.createLabel({ ...repo, name: 'cherry-pick', color: '1d76db', description: 'Cherry-pick pull request' });
+  }
   for (const target of process.env.TARGETS.split(' ').filter(Boolean)) {
     for (const pull of await cherryPickPulls(github, repo, target, 'open')) {
-      await github.rest.issues.addLabels({ ...repo, issue_number: pull.number, labels: [target.slice('release/'.length)] });
+      await github.rest.issues.setLabels({
+        ...repo,
+        issue_number: pull.number,
+        labels: cherryPickLabels(labels, target, pull.labels.map((label) => label.name)),
+      });
     }
   }
 }
