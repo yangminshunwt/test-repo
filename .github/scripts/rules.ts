@@ -67,11 +67,6 @@ function parseReleaseBranch(name: string): ReleaseVersion | null {
   return match ? { product: match[1], version: match[2] } : null;
 }
 
-// cherry-pick の PR のブランチ名（cherry-pick.yml の branch_name と同じ形）。手で cherry-pick するときも、この名前にしてもらう。
-function cherryPickBranch(prNumber: number, target: string): string {
-  return `cherry-pick-${prNumber}-to-${target}`;
-}
-
 // cherry-pick の PR のブランチ名なら元の PR の番号を、そうでなければ null を返す。
 function parseCherryPickBranch(name: string): number | null {
   const match = /^cherry-pick-(\d+)-to-/.exec(name);
@@ -103,16 +98,6 @@ function extractReleaseLabels(labels: string[], products: string[]): ReleaseLabe
     const match = RELEASE_LABEL_PATTERN.exec(label);
     return match && products.includes(match[1]) ? [{ label, product: match[1], version: match[2] }] : [];
   });
-}
-
-// 元の PR のラベルを、製品やバージョンを変えずに引き継ぐ。
-// 既存の PR ではリリースラベルだけを置き換え、ほかのラベルは残す。
-function cherryPickLabels(labels: string[], existingLabels: string[] = []): string[] {
-  return [...new Set([
-    ...existingLabels.filter((label) => !RELEASE_LABEL_PATTERN.test(label)),
-    'cherry-pick',
-    ...labels,
-  ])];
 }
 
 // baseBranch: PR のマージ先
@@ -295,8 +280,6 @@ function setVersion(versionFile: string, product: string, version: string): stri
 export {
   belongsTo,
   checkReleaseLabels,
-  cherryPickBranch,
-  cherryPickLabels,
   compareVersions,
   extractReleaseLabels,
   findAffectedProducts,

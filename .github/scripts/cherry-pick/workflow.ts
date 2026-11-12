@@ -1,8 +1,12 @@
 import type { WorkflowInput } from '../github.ts';
 import { compareVersions, extractReleaseLabels, parseReleaseBranch } from '../rules.ts';
-import { labelPullRequests } from './labels.ts';
 
-// YAML との受け渡しはここにまとめ、各処理には引数で渡す。
+// REST は archived_at を返すが、@actions/github のラベル型にはまだ含まれていない。
+interface SourceLabel {
+  name: string;
+  archived_at?: string | null;
+}
+
 export async function prepare({ github, context, core }: WorkflowInput, env = process.env): Promise<void> {
   const repo = context.repo;
   const { data: pr } = await github.rest.pulls.get({ ...repo, pull_number: Number(env.PR_NUMBER) });
@@ -29,13 +33,13 @@ export async function prepare({ github, context, core }: WorkflowInput, env = pr
     })
     .sort();
   core.setOutput('targets', targets.join(' '));
-}
+  if (targets.length === 0) return;
 
-export async function label({ github, context }: WorkflowInput, env = process.env): Promise<void> {
-  await labelPullRequests({
-    github,
-    repo: context.repo,
-    prNumber: Number(env.PR_NUMBER),
-    targets: env.TARGETS!.split(' ').filter(Boolean),
+  const originalLabels: SourceLabel[] = await github.paginate(github.rest.issues.listLabelsOnIssue, {
+    ...repo,
+    issue_number: pr.number,
+    per_page: 100,
   });
+  const activeLabels = originalLabels.filter((label) => !label.archived_at).map((label) => label.name);
+  core.setOutput('labels', ['cherry-pick', ...activeLabels].join(','));
 }
