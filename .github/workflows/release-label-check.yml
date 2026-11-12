@@ -34,8 +34,8 @@ jobs:
         uses: actions/github-script@v9
         with:
           script: |
-            const { findBase } = require('./.github/scripts/release-label-check.ts')
-            findBase({ context, core })
+            const { git } = require('./.github/scripts/github-helpers.ts')
+            core.setOutput('base_sha', context.payload.merge_group?.base_sha ?? git('rev-parse', 'HEAD^1'))
 
       # token を空にして、ファイル数制限のある API ではなく git で差分を取る。
       - id: products
