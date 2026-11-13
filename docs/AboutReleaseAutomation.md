@@ -87,7 +87,7 @@ Normal Release Preparation と Tag Creation は、同じ定義を使う（`rules
 - 2 つの Release Preparation と Tag Creation は、実行した人を確かめない。Actions を実行できる人なら、App を通してリリースブランチとタグを作り、リリースブランチを削除できる。
 - 2 つの Release Preparation と Tag Creation は、App のトークンを作ってから動く。秘密鍵がなければ、何も作らずに止まる。
 - Cherry-Pick の行き先は、実行した時点で今あるリリースブランチだけ。あとで作ったブランチに入っていない変更の Cherry-Pick を実行するのは、Normal Release Preparation だけ。管理者が手で作ったリリースブランチでは、そのバージョンのリリースラベルと VERSION を上げる PR を手で作り、rc が書き出した PR ごとに Cherry-Pick を手で実行する。
-- Rerun Release Checks は、最初の実行から 30 日を過ぎたチェックをやり直せない（GitHub の制限）。そのときは失敗して PR を書き出すので、その PR に push するか、ラベルを付け直す。
+- Rerun Release Checks は、最初の実行から 30 日を過ぎたチェックをやり直せない（GitHub の制限）。そのときは失敗して PR を書き出すので、その PR に push して新しい実行を作る。ラベルのチェックだけなら、ラベルを付け直してもよい。
 - `.github/product-paths.yml` のパスと製品の対応が実際の依存と合っているかと、`ci.yml` の製品のテストのジョブ（`ci` の `needs` も）が VERSION の製品とそろっているかは、確かめない（テストのジョブがない製品の変更は、テストなしで `ci` が通る）。
 
 ## 変えるとき
