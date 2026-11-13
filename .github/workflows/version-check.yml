@@ -1,0 +1,44 @@
+name: Version Check
+
+on:
+  pull_request:
+    branches:
+      - main
+      - 'release/**'
+    types: [opened, synchronize, reopened, edited]
+  merge_group:
+    types: [checks_requested]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  version-check:
+    name: version check
+    if: github.event_name == 'merge_group' || !github.event.pull_request.merged
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event_name == 'merge_group' && github.sha || format('refs/pull/{0}/merge', github.event.pull_request.number) }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - id: base
+        name: Find comparison base
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const { git } = require('./.github/scripts/github-helpers.ts')
+            core.setOutput('base_sha', context.payload.merge_group?.base_sha ?? git('rev-parse', 'HEAD^1'))
+
+      - name: Check VERSION
+        uses: actions/github-script@v9
+        env:
+          BASE_SHA: ${{ steps.base.outputs.base_sha }}
+        with:
+          retries: 3 # GitHub API の一時的なエラー（5xx）はやり直す
+          script: |
+            const { check } = require('./.github/scripts/version-check.ts')
+            await check({ github, context, core })
