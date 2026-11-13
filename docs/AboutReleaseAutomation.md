@@ -7,7 +7,7 @@
 | ワークフロー | 動くとき | すること |
 |---|---|---|
 | CI（`ci.yml`） | PR、マージキュー | 変更が影響する製品のテストと、自動化のスクリプトのテストを動かし、結果を `ci` にまとめる |
-| Release Label Check（`release-label-check.yml`） | `main` と `release/` で始まるブランチへの PR、マージキュー | リリースラベルの決まりを確かめる。VERSION を変える PR のラベルは変更後のバージョンにする |
+| Release Label Check（`release-label-check.yml`） | `main` と `release/` で始まるブランチへの PR、マージキュー | リリースラベルの製品、個数、バージョンとリリースブランチの有無を確かめる |
 | Version Check（`version-check.yml`） | `main` と `release/` で始まるブランチへの PR、マージキュー | main では降版の禁止とパッチ 0、release ではブランチ名との一致を確かめる。ラベルは使わない |
 | Rerun Release Checks（`rerun-release-checks.yml`） | リリースブランチの作成・削除、保護ブランチの VERSION の変更 | ブランチの作成・削除では Release Label Check を、VERSION の変更では Version Check もやり直す |
 | Cherry-Pick（`cherry-pick.yml`） | 保護ブランチへの PR のマージ、手で実行（`main`） | ラベルの範囲のほかのリリースブランチへ、cherry-pick の PR を作る |
@@ -22,7 +22,7 @@
 - 製品名の元は VERSION（1 行 1 製品で `product-name/X.Y.Z`）。
 - 変更が影響する製品は、`.github/product-paths.yml` のパスで決める。複数の製品で使うパスは、使う製品すべてに書く。どこにも書かれていないパスの変更は、すべての製品に影響するとみなす。`none` に書いたパス（VERSION、docs、.github など）は、どの製品にも影響しない（`ci.yml` を変えたときは、CI がすべての製品のテストを動かす）。ファイルの移動は、移動元と移動先の両方の変更として数える。
 - 必須チェックは `release label check`、`version check`、`ci`。いずれも GitHub のテスト用マージコミット（マージキューではマージグループのコミット）を確かめる。比較基準の `base_sha` は、PR ではその第 1 親、キューではイベントの `base_sha` とし、差分と変更前の VERSION に共通で使う。テストのジョブは `ci` にまとめ、飛ばしたジョブは通った扱いにする。
-- PR のマージ先、ラベル、今あるリリースブランチは、実行した時点の状態を読み直す。Release Label Check と Version Check は、再実行でも現在の `refs/pull/<PR 番号>/merge` を取得する。Release Label Check はその第 1 親との差分と両方の VERSION を、Version Check は両方の VERSION を調べる。マージキューでは、イベントの `base_sha` と合成済みコミットを比べる。人が出した PR のラベルは、自動化では変えない（ただし、cherry-pick のブランチ名の PR には、Cherry-Pick が元の PR のアーカイブされていないラベルと `cherry-pick` ラベルを付ける）。
+- PR のマージ先、ラベル、今あるリリースブランチは、実行した時点の状態を読み直す。Release Label Check と Version Check は、再実行でも現在の `refs/pull/<PR 番号>/merge` を取得する。Release Label Check はその第 1 親との差分とマージ後の VERSION を、Version Check はマージ前後の VERSION を調べる。マージキューでは、イベントの `base_sha` と合成済みコミットを比べる。人が出した PR のラベルは、自動化では変えない（ただし、cherry-pick のブランチ名の PR には、Cherry-Pick が元の PR のアーカイブされていないラベルと `cherry-pick` ラベルを付ける）。
 - 自動化の GitHub App の秘密鍵は Environment `automation-app` の秘密 `AUTOMATION_APP_PRIVATE_KEY` に、Client ID は変数 `AUTOMATION_APP_CLIENT_ID` に置く。Environment は `main` と `release/**/*` でだけ使えるようにする（どちらもコードにはない設定）。App には Contents・Issues・Pull requests・Workflows の書き込みの権限が要り、ルールセットの例外にもする。
 - 使うワークフローとスクリプト：Cherry-Pick と 2 つの Release Preparation は、`main` のもの。Tag Creation は、実行したリリースブランチのもの。Rerun Release Checks は、イベントが起きたブランチのもの（削除では `main`）。PR の CI・Release Label Check・Version Check のワークフローは、イベントのテスト用マージコミットのもの。CI は全ジョブでイベントの `github.sha` を取得し、コード・スクリプト・パス設定をそろえる。Release Label Check と Version Check のスクリプトは、検査するマージコミットから取る（再実行では現在のもの）。この 2 つのうち、パス設定を使うのは Release Label Check だけ。CI は PR の情報を API で読まない。Release Label Check は現在のマージ先とラベルを、Version Check は現在のマージ先を読む（マージキューではイベントのマージ先を使う）。
 
@@ -43,7 +43,7 @@ Normal Release Preparation と Tag Creation は、同じ定義を使う（`rules
 - リリースブランチへの PR には、どの製品にも影響しない変更でも、そのブランチの製品のリリースラベルが要る。ただし、`cherry-pick` ラベルの付いた PR は、元のラベルがアーカイブ済みで引き継げないため、リリースラベルがなくてもよい。
 - `cherry-pick` ラベルの付いたリリースブランチへの PR は、元のリリースラベルのブランチが削除済みでもよく、他の製品のラベルも残してよい。ラベルの検査は行き先の製品に対して行い、バージョンの上限と VERSION のチェックは通常の PR と同じ。
 - 形式に合わないラベルと、VERSION にない製品のラベルは、リリースラベルとみなさない（無視する）。
-- VERSION を変える PR に、その製品のリリースラベルを付けるなら、変えた後のバージョンにする。
+- VERSION を変える PR にも、通常のラベルの規則を適用する。既存の古いリリースブランチのラベルも使える。cherry-pick で VERSION の変更も運ばれ、行き先のブランチ名と一致しなくなった場合は、Version Check がマージを止める。
 - マージ先とコンフリクトしている PR は、通らない。
 
 ### VERSION

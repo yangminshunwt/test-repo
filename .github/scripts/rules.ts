@@ -22,7 +22,6 @@ export interface ReleaseLabelCheckInput {
   labels: string[];
   affectedProducts: string[];
   versionFileAfterMerge: string;
-  versionFileBeforeMerge: string;
   releaseBranches: string[];
 }
 
@@ -109,18 +108,16 @@ function extractReleaseLabels(labels: string[], products: string[]): ReleaseLabe
 // baseBranch: PR のマージ先
 // labels: PR に付いているラベル
 // affectedProducts: 変更が影響する製品（versionFileAfterMerge の製品のうち）
-// versionFileAfterMerge / versionFileBeforeMerge: マージ後とマージ前の VERSION ファイルの中身
+// versionFileAfterMerge: マージ後の VERSION ファイルの中身
 // releaseBranches: 今あるリリースブランチの名前
 function checkReleaseLabels({
   baseBranch,
   labels,
   affectedProducts,
   versionFileAfterMerge,
-  versionFileBeforeMerge,
   releaseBranches,
 }: ReleaseLabelCheckInput): { errors: string[] } {
   const versionsAfterMerge = parseVersionFile(versionFileAfterMerge);
-  const versionsBeforeMerge = parseVersionFile(versionFileBeforeMerge);
   const products = Object.keys(versionsAfterMerge);
   const errors: string[] = [];
   const release = parseReleaseBranch(baseBranch);
@@ -197,18 +194,6 @@ function checkReleaseLabels({
       } else if (!isCherryPick && version !== branchVersion && !hasBranch(product, version)) {
         errors.push(`${label}：${product} に v${version} のリリースブランチがありません（リリース済みか、まだ作っていません）。${target}か、それより古い今あるリリースブランチのバージョンを付けてください。`);
       }
-    }
-  }
-
-  // VERSION を変える PR にラベルを付けるなら、変更後のバージョンにする。
-  for (const product of products) {
-    if (release && product !== release.product) continue;
-    const before = versionsBeforeMerge[product];
-    const after = versionsAfterMerge[product];
-    if (before === undefined || before === after) continue;
-
-    for (const { label, version } of labelsByProduct.get(product) ?? []) {
-      if (version !== after) errors.push(`${label}：VERSION の ${product} を ${after} にする PR には、${product}/v${after} を付けてください。`);
     }
   }
 

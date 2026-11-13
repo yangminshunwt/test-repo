@@ -88,14 +88,13 @@ async function runChecks(
   return { labels: labelCore.failures, versions: versionCore.failures };
 }
 
-test('マージキュー：前に並んでいる PR の変更（VERSION を上げる）を、この PR の変更とみなさない', async () => {
+test('マージキュー：合成済みコミットの VERSION とイベントのマージ先で確かめる', async () => {
   git('checkout', '-q', '--detach', group12);
-  // 1.4.0 のリリースブランチがあるので、#12 に product-a/v1.4.0 を付けてよい（VERSION は変えていない）
+  // 1.4.0 のリリースブランチがあるので、#12 に product-a/v1.4.0 を付けてよい。
   // PR の番号はキューのブランチ名から読む。キューではイベントのマージ先を使う。
   const payload = { merge_group: mergeGroup12 };
   assert.deepEqual(await runChecks(group11, ['product-a/v1.4.0'], 'old-base', payload), { labels: [], versions: [] });
-  // 今の main の先頭をマージ前の中身にすると、#11 の VERSION の変更を #12 の変更とみなして止めてしまう
-  assert.equal((await runChecks(root, ['product-a/v1.4.0'], 'old-base', payload)).labels.length, 1);
+  assert.equal((await runChecks(group11, ['product-a/v1.6.0'], 'old-base', payload)).labels.length, 1);
 });
 
 test('PR のマージ結果：main 側の VERSION 更新を PR の変更に含めない', async () => {
@@ -111,11 +110,15 @@ test('PR のマージ結果：main 側の VERSION 更新を PR の変更に含�
   git('update-ref', 'refs/remotes/origin/main', root);
 });
 
-test('PR のマージ結果：PR 自身の VERSION 更新には更新後のラベルが必要', async () => {
+test('VERSION 更新を含む PR も古いラベルを使えるが、cherry-pick 先の VERSION は一致させる', async () => {
   const head = commit(root, { VERSION: versionFile('1.5.0'), 'ProductA/app.txt': 'a next version\n' }, 'Update product-a and VERSION');
   merge(root, head);
   assert.deepEqual(await runChecks(root, ['product-a/v1.5.0']), { labels: [], versions: [] });
-  assert.equal((await runChecks(root, ['product-a/v1.4.0'])).labels.length, 1);
+  assert.deepEqual(await runChecks(root, ['product-a/v1.4.0']), { labels: [], versions: [] });
+
+  const cherryPick = await runChecks(root, ['cherry-pick', 'product-a/v1.4.0'], 'release/product-a/v1.4.0');
+  assert.deepEqual(cherryPick.labels, []);
+  assert.equal(cherryPick.versions.length, 1);
 });
 
 test('リリース PR の再確認：新しいテスト用マージコミットの VERSION を使う', async () => {

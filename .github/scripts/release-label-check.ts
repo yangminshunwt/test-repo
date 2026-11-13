@@ -29,9 +29,7 @@ async function check({ github, context, core }: WorkflowInput) {
     baseBranch = pullRequest.base.ref;
   }
 
-  const baseSha = process.env.BASE_SHA!;
   const versionFileAfterMerge = git('show', 'HEAD:VERSION');
-  const versionFileBeforeMerge = git('show', `${baseSha}:VERSION`);
   const releaseBranches = localReleaseBranches();
 
   const matchedFilters: string[] = JSON.parse(process.env.AFFECTED_PRODUCTS!);
@@ -48,7 +46,6 @@ async function check({ github, context, core }: WorkflowInput) {
     labels,
     affectedProducts: affected.products,
     versionFileAfterMerge,
-    versionFileBeforeMerge,
     releaseBranches,
   });
 
