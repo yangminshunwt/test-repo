@@ -37,8 +37,21 @@ jobs:
         uses: actions/github-script@v9
         with:
           script: |
-            const { git } = require('./.github/scripts/github-helpers.ts')
-            core.setOutput('base_sha', context.payload.merge_group?.base_sha ?? git('rev-parse', 'HEAD^1'))
+            const mergeGroup = context.payload.merge_group
+            let baseSha
+
+            if (mergeGroup) {
+              // マージキュー：GitHub が通知した、今回のマージグループの比較基準を使う。
+              baseSha = mergeGroup.base_sha
+            } else {
+              // 通常の PR：HEAD は GitHub が作ったテスト用マージコミット。
+              // HEAD^1 はその第 1 親、つまりこの PR をマージする前のマージ先のコミット。
+              const { git } = require('./.github/scripts/github-helpers.ts')
+              baseSha = git('rev-parse', 'HEAD^1')
+            }
+
+            // 後のステップが steps.base.outputs.base_sha で参照できるようにする。
+            core.setOutput('base_sha', baseSha)
 
       # 影響する製品は、ラベルのチェックと同じ設定（.github/product-paths.yml）で決める。
       # 製品の設定に書かれていないパスの変更（all と listed の件数が違う）があれば、すべての製品のテストを動かす。
