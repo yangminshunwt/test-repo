@@ -1,47 +1,66 @@
-// release-label-check.yml と ci.yml から actions/github-script で呼ぶ。
-// Label Check はテスト用マージコミット、CI は PR の先頭を取得する。キューでは両方とも合成済みコミットを使う。
-import type { WorkflowInput, Core } from './github.ts';
+// release-label-check.yml と release-label-recheck.yml から actions/github-script で呼ぶ。
+import type { WorkflowInput } from './github.ts';
 import { git, localReleaseBranches } from './github-helpers.ts';
 import { checkReleaseLabels, findAffectedProducts, parseMergeQueueBranch, parseVersionFile } from './rules.ts';
 
-// PR の今のマージ先とラベル（イベントの後に変わっていても今の状態で判定するため、API で取り直す）と、
-// マージ前の中身（before）と paths-filter が変更を探す起点（base_sha）を出力する。
-async function findBase({ github, context, core, mergedCheckout = false }: WorkflowInput & { mergedCheckout?: boolean }) {
-  const group = context.payload.merge_group;
-  const number = group ? parseMergeQueueBranch(group.head_ref) : context.payload.pull_request!.number;
-  const { data: pr } = await github.rest.pulls.get({ ...context.repo, pull_number: number! });
-  const baseRef = group ? group.base_ref.replace(/^refs\/heads\//, '') : pr.base.ref;
-  // テスト用マージコミットの第 1 親は、そのコミットを作ったときのマージ先。CI は従来どおり現在のマージ先と比較する。
-  const before = group ? group.base_sha : git('rev-parse', mergedCheckout ? 'HEAD^1' : `refs/remotes/origin/${baseRef}`);
-  core.setOutput('base_ref', baseRef);
-  core.setOutput('before', before);
-  core.setOutput('base_sha', mergedCheckout ? before : git('merge-base', 'HEAD', before));
-  core.setOutput('labels', JSON.stringify(pr.labels.map((label) => label.name)));
-}
+async function check({ github, context, core }: WorkflowInput) {
+  const mergeGroup = context.payload.merge_group;
+  let pullRequestNumber: number;
+  if (mergeGroup) {
+    // キューのイベントには PR 番号がないため、ブランチ名から読む。
+    pullRequestNumber = parseMergeQueueBranch(mergeGroup.head_ref)!;
+  } else {
+    pullRequestNumber = context.payload.pull_request!.number;
+  }
 
-function check({ core }: { core: Pick<Core, 'warning' | 'error' | 'setFailed'> }) {
-  const env = process.env;
-  const baseBranch = env.BASE_REF!;
-  const before = env.BEFORE!;
-  const labels: string[] = JSON.parse(env.LABELS!);
-  const versionFile = git('show', 'HEAD:VERSION');
-  const affected = findAffectedProducts({
-    matched: JSON.parse(env.AFFECTED_PRODUCTS!),
-    products: Object.keys(parseVersionFile(versionFile)),
-    hasUnlistedFiles: env.HAS_UNLISTED_FILES === 'true',
+  // 再実行でも現在のマージ先とラベルを使うため、PR を API で取り直す。
+  const response = await github.rest.pulls.get({
+    ...context.repo,
+    pull_number: pullRequestNumber,
   });
-  const { errors } = checkReleaseLabels({
+  const pullRequest = response.data;
+  const labels = pullRequest.labels.map((label) => label.name);
+
+  let baseBranch: string;
+  if (mergeGroup) {
+    // キューが作られたマージ先を使う（refs/heads/main → main）。
+    baseBranch = mergeGroup.base_ref.replace(/^refs\/heads\//, '');
+  } else {
+    baseBranch = pullRequest.base.ref;
+  }
+
+  const baseSha = process.env.BASE_SHA!;
+  const versionFileAfterMerge = git('show', 'HEAD:VERSION');
+  const versionFileBeforeMerge = git('show', `${baseSha}:VERSION`);
+  const releaseBranches = localReleaseBranches();
+
+  const matchedFilters: string[] = JSON.parse(process.env.AFFECTED_PRODUCTS!);
+  const allProducts = Object.keys(parseVersionFile(versionFileAfterMerge));
+  const hasUnlistedFiles = process.env.HAS_UNLISTED_FILES === 'true';
+  const affected = findAffectedProducts({
+    matched: matchedFilters,
+    products: allProducts,
+    hasUnlistedFiles,
+  });
+
+  const result = checkReleaseLabels({
     baseBranch,
     labels,
     affectedProducts: affected.products,
-    versionFile,
-    baseVersionFile: git('show', `${before}:VERSION`),
-    branches: localReleaseBranches(),
+    versionFile: versionFileAfterMerge,
+    baseVersionFile: versionFileBeforeMerge,
+    branches: releaseBranches,
   });
 
-  if (affected.reason) core.warning(affected.reason);
-  for (const error of errors) core.error(error);
-  if (errors.length > 0) core.setFailed(`リリースラベルのルールを満たしていません（${errors.length} 件）。`);
+  if (affected.reason) {
+    core.warning(affected.reason);
+  }
+  for (const error of result.errors) {
+    core.error(error);
+  }
+  if (result.errors.length > 0) {
+    core.setFailed(`リリースラベルのルールを満たしていません（${result.errors.length} 件）。`);
+  }
 }
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
@@ -79,4 +98,4 @@ async function recheck({ github, context, core }: WorkflowInput) {
   }
 }
 
-export { findBase, check, recheck };
+export { check, recheck };

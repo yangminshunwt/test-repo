@@ -11,10 +11,7 @@ on:
 permissions:
   contents: read
 
-# 影響する製品のテストだけを動かす。テストは PR の先頭で動かす（ルールセットで「マージ先の最新を取り込んでから」スカッシュで
-# マージするので、マージできるときは PR の先頭の中身がマージ後の中身と同じになる）。マージキューを使うブランチでは、最新に
-# 合わせなくてもキューに入れられるので、マージ先に入るマージグループのコミットでも動かし、影響する製品は、マージグループの親からの
-# 変更（この PR の変更）で決める。
+# 差分の判定とテストは、イベントの同じマージコミット（キューではマージグループ）で動かす。
 # 必須チェックは、最後の ci だけ。飛ばしたテストのジョブは成功の扱いで、判定やテストが失敗・取り消しなら ci が失敗する
 # （製品を足しても、ルールセットの必須チェックは変えなくてよい）。
 jobs:
@@ -24,9 +21,6 @@ jobs:
     # マージキューでは必ずテストする
     if: github.event_name == 'merge_group' || !github.event.pull_request.merged
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      pull-requests: read # 今のマージ先を API で取り直す
     outputs:
       matched: ${{ steps.paths.outputs.changes }}
       all_products: ${{ steps.paths.outputs.all_count != steps.paths.outputs.listed_count || steps.scripts.outputs.ci == 'true' }}
@@ -34,32 +28,24 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ github.sha }}
           fetch-depth: 0
           persist-credentials: false
 
-      # スクリプトと製品のパス設定（.github の直下のファイル）は、このワークフローと同じ版（テスト用のマージコミットか、マージグループのコミット）のものを使う
-      # （PR の先頭が古いと、ワークフローと食い違うため）。PR の先頭は、変更とマージ後の中身を調べるデータとしてだけ使う
-      - uses: actions/checkout@v7
-        with:
-          path: .automation
-          sparse-checkout: .github/scripts
-          persist-credentials: false
-
       - id: base
+        name: Find comparison base
         uses: actions/github-script@v9
         with:
-          retries: 3 # GitHub API の一時的なエラー（5xx）はやり直す
           script: |
-            const { findBase } = require('./.automation/.github/scripts/release-label-check.ts')
-            await findBase({ github, context, core })
+            const { git } = require('./.github/scripts/github-helpers.ts')
+            core.setOutput('base_sha', context.payload.merge_group?.base_sha ?? git('rev-parse', 'HEAD^1'))
 
       # 影響する製品は、ラベルのチェックと同じ設定（.github/product-paths.yml）で決める。
       # 製品の設定に書かれていないパスの変更（all と listed の件数が違う）があれば、すべての製品のテストを動かす。
       - id: paths
         uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
         with:
-          filters: .automation/.github/product-paths.yml
+          filters: .github/product-paths.yml
           base: ${{ steps.base.outputs.base_sha }}
           token: ''
 
@@ -84,7 +70,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ github.sha }}
           persist-credentials: false
       - name: Run tests
         run: test ! -e ProductA/FAIL
@@ -97,7 +83,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ github.sha }}
           persist-credentials: false
       - name: Run tests
         run: test ! -e ProductB/FAIL
@@ -111,7 +97,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ github.sha }}
           persist-credentials: false
       - uses: actions/setup-node@v7
         with:

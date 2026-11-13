@@ -30,13 +30,12 @@ jobs:
           persist-credentials: false
 
       - id: base
-        name: Read pull request and base
+        name: Find comparison base
         uses: actions/github-script@v9
         with:
-          retries: 3 # GitHub API の一時的なエラー（5xx）はやり直す
           script: |
-            const { findBase } = require('./.github/scripts/release-label-check.ts')
-            await findBase({ github, context, core, mergedCheckout: true })
+            const { git } = require('./.github/scripts/github-helpers.ts')
+            core.setOutput('base_sha', context.payload.merge_group?.base_sha ?? git('rev-parse', 'HEAD^1'))
 
       # token を空にして、ファイル数制限のある API ではなく git で差分を取る。
       - id: products
@@ -50,12 +49,11 @@ jobs:
       - name: Check release labels
         uses: actions/github-script@v9
         env:
-          BASE_REF: ${{ steps.base.outputs.base_ref }}
-          BEFORE: ${{ steps.base.outputs.before }}
-          LABELS: ${{ steps.base.outputs.labels }}
+          BASE_SHA: ${{ steps.base.outputs.base_sha }}
           AFFECTED_PRODUCTS: ${{ steps.products.outputs.changes }}
           HAS_UNLISTED_FILES: ${{ fromJSON(steps.products.outputs.all_count) > fromJSON(steps.products.outputs.listed_count) }}
         with:
+          retries: 3 # GitHub API の一時的なエラー（5xx）はやり直す
           script: |
             const { check } = require('./.github/scripts/release-label-check.ts')
-            check({ core })
+            await check({ github, context, core })
