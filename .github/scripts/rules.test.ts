@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   belongsTo,
   checkReleaseLabels,
+  checkVersions,
   compareVersions,
   findAffectedProducts,
   parseCherryPickBranch,
@@ -21,15 +22,16 @@ function versionFile(a: string, b: string) {
 }
 
 // 開発ルールの Q＆A と同じ状況：main は v1.5.0、リリースブランチは v1.3.0 と v1.4.0。
-const BRANCHES = [
+const RELEASE_BRANCHES = [
   'release/product-a/v1.3.0',
   'release/product-a/v1.4.0',
   'release/product-b/v1.4.0',
 ];
 
 // version / baseVersion：マージ後とマージ前の VERSION。baseVersion を省くと VERSION は変えない PR になる。
-function check({ baseBranch = 'main', labels, affectedProducts = ['product-a'], version = versionFile('1.5.0', '1.5.0'), baseVersion = version, branches = BRANCHES }: { baseBranch?: string; labels: string[]; affectedProducts?: string[]; version?: string; baseVersion?: string; branches?: string[] }) {
-  return checkReleaseLabels({ baseBranch, labels, affectedProducts, versionFile: version, baseVersionFile: baseVersion, branches });
+function check({ baseBranch = 'main', labels, affectedProducts = ['product-a'], version = versionFile('1.5.0', '1.5.0'), baseVersion = version, releaseBranches = RELEASE_BRANCHES }: { baseBranch?: string; labels: string[]; affectedProducts?: string[]; version?: string; baseVersion?: string; releaseBranches?: string[] }) {
+  const input = { baseBranch, labels, affectedProducts, versionFileAfterMerge: version, versionFileBeforeMerge: baseVersion, releaseBranches };
+  return { errors: [...checkReleaseLabels(input).errors, ...checkVersions(input).errors] };
 }
 
 function assertOk(result: { errors: string[] }) {
@@ -42,6 +44,50 @@ function assertError(result: { errors: string[] }, pattern: RegExp) {
     `${pattern} に合うエラーがありません: ${JSON.stringify(result.errors)}`,
   );
 }
+
+test('VERSION が release と不一致でもラベルのチェックは通り、VERSION のチェックで止める', () => {
+  const input = {
+    baseBranch: 'release/product-a/v1.4.1',
+    labels: ['cherry-pick', 'product-a/v1.4.0'],
+    affectedProducts: ['product-a'],
+    versionFileAfterMerge: versionFile('1.4.0', '2.0.0'),
+    versionFileBeforeMerge: versionFile('1.4.0', '2.0.0'),
+    releaseBranches: RELEASE_BRANCHES,
+  };
+  assertOk(checkReleaseLabels(input));
+  assertError(checkVersions(input), /ブランチのバージョン（v1\.4\.1）と一致しません/);
+});
+
+test('main の降版とパッチは、ラベルを使わず VERSION のチェックで確かめる', () => {
+  for (const [version, message] of [
+    ['1.4.0', /下げています/],
+    ['1.5.1', /パッチを 0/],
+  ] as const) {
+    const input = {
+      baseBranch: 'main',
+      labels: [],
+      affectedProducts: [],
+      versionFileAfterMerge: versionFile(version, '1.5.0'),
+      versionFileBeforeMerge: versionFile('1.5.0', '1.5.0'),
+      releaseBranches: RELEASE_BRANCHES,
+    };
+    assertOk(checkReleaseLabels(input));
+    assertError(checkVersions(input), message);
+  }
+});
+
+test('VERSION を上げる PR の古いラベルは、VERSION のチェックではなくラベルのチェックで止める', () => {
+  const input = {
+    baseBranch: 'main',
+    labels: ['product-a/v1.5.0'],
+    affectedProducts: ['product-a'],
+    versionFileAfterMerge: versionFile('1.6.0', '1.5.0'),
+    versionFileBeforeMerge: versionFile('1.5.0', '1.5.0'),
+    releaseBranches: [...RELEASE_BRANCHES, 'release/product-a/v1.5.0'],
+  };
+  assertError(checkReleaseLabels(input), /product-a\/v1\.6\.0 を付けてください/);
+  assertOk(checkVersions(input));
+});
 
 test('VERSION ファイルを読む', () => {
   assert.deepEqual(parseVersionFile(versionFile('1.2.3', '4.5.6')), { 'product-a': '1.2.3', 'product-b': '4.5.6' });
@@ -116,36 +162,37 @@ test('main：対応するブランチがないバージョンは NG', () => {
 });
 
 test('main：VERSION だけを変える PR には、ラベルは要らない（付けると NG）', () => {
-  const branches = [...BRANCHES, 'release/product-a/v1.5.0', 'release/product-b/v1.5.0'];
-  const bump = { affectedProducts: [], version: versionFile('1.6.0', '1.6.0'), baseVersion: versionFile('1.5.0', '1.5.0'), branches };
+  const releaseBranches = [...RELEASE_BRANCHES, 'release/product-a/v1.5.0', 'release/product-b/v1.5.0'];
+  const bump = { affectedProducts: [], version: versionFile('1.6.0', '1.6.0'), baseVersion: versionFile('1.5.0', '1.5.0'), releaseBranches };
   assertOk(check({ ...bump, labels: [] }));
   assertError(check({ ...bump, labels: ['product-a/v1.6.0'] }), /product-a に影響する変更はありませんが/);
 });
 
 test('main：VERSION を上げる PR にその製品のラベルを付けるなら、上げた後のバージョンにする', () => {
-  const branches = [...BRANCHES, 'release/product-a/v1.5.0'];
-  const bump = { version: versionFile('1.6.0', '1.5.0'), baseVersion: versionFile('1.5.0', '1.5.0'), branches };
+  const releaseBranches = [...RELEASE_BRANCHES, 'release/product-a/v1.5.0'];
+  const bump = { version: versionFile('1.6.0', '1.5.0'), baseVersion: versionFile('1.5.0', '1.5.0'), releaseBranches };
   assertOk(check({ ...bump, labels: ['product-a/v1.6.0'] }));
   // 古いバージョンなら、上げた VERSION ごと cherry-pick される
   assertError(check({ ...bump, labels: ['product-a/v1.5.0'] }), /product-a\/v1\.6\.0 を付けてください/);
 });
 
-test('main：上げる前のバージョンのリリースブランチがなければ、VERSION を上げる PR は NG', () => {
-  const bump = { affectedProducts: [], version: versionFile('1.6.0', '1.5.0'), baseVersion: versionFile('1.5.0', '1.5.0'), labels: [] };
-  assertError(check(bump), /release\/product-a\/v1\.5\.0 を作ってください/);
-  // 製品を足すとき（前のバージョンがない）は求めない
+test('main：リリースブランチがなくても VERSION を上げられる', () => {
+  const bump = { affectedProducts: [], baseVersion: versionFile('1.5.0', '1.5.0'), labels: [], releaseBranches: [] };
+  assertOk(check({ ...bump, version: versionFile('1.6.0', '1.5.0') }));
+  assertOk(check({ ...bump, version: versionFile('2.0.0', '1.5.0') }));
+  // 製品の追加は、既存の VERSION の変更には含めない。
   const add = { affectedProducts: [], version: `${HEADER}product-a/1.5.0\nproduct-b/1.5.0\nproduct-c/1.0.0\n`, baseVersion: versionFile('1.5.0', '1.5.0'), labels: [] };
   assertOk(check(add));
 });
 
 test('main：VERSION のパッチを上げる PR は NG（パッチは修正フェーズで使う）', () => {
-  const branches = [...BRANCHES, 'release/product-a/v1.5.0'];
-  const bump = { affectedProducts: [], baseVersion: versionFile('1.5.0', '1.5.0'), branches, labels: [] };
+  const releaseBranches = [...RELEASE_BRANCHES, 'release/product-a/v1.5.0'];
+  const bump = { affectedProducts: [], baseVersion: versionFile('1.5.0', '1.5.0'), releaseBranches, labels: [] };
   assertError(check({ ...bump, version: versionFile('1.5.1', '1.5.0') }), /パッチを 0 にしてください/);
   assertOk(check({ ...bump, version: versionFile('1.6.0', '1.5.0') }));
   assertOk(check({ ...bump, version: versionFile('2.0.0', '1.5.0') }));
   // 修正フェーズのリリースブランチでは、パッチを上げる
-  const hotfix = { baseBranch: 'release/product-a/v1.2.1', branches: [...BRANCHES, 'release/product-a/v1.2.1'], affectedProducts: [], baseVersion: versionFile('1.2.0', '1.2.0'), labels: ['product-a/v1.2.1'] };
+  const hotfix = { baseBranch: 'release/product-a/v1.2.1', releaseBranches: [...RELEASE_BRANCHES, 'release/product-a/v1.2.1'], affectedProducts: [], baseVersion: versionFile('1.2.0', '1.2.0'), labels: ['product-a/v1.2.1'] };
   assertOk(check({ ...hotfix, version: versionFile('1.2.1', '1.2.0') }));
 });
 
@@ -154,6 +201,19 @@ test('main：VERSION を下げる PR は NG', () => {
     check({ labels: ['product-a/v1.4.0'], version: versionFile('1.4.0', '1.5.0'), baseVersion: versionFile('1.5.0', '1.5.0') }),
     /1\.5\.0 から 1\.4\.0 に下げています/,
   );
+});
+
+test('release：VERSION はブランチ名との一致だけを確かめ、降版のエラーは重ねない', () => {
+  const input = {
+    baseBranch: 'release/product-a/v1.4.1',
+    versionFileBeforeMerge: versionFile('1.4.1', '2.0.0'),
+  };
+  for (const version of ['1.4.0', '1.5.0']) {
+    const result = checkVersions({ ...input, versionFileAfterMerge: versionFile(version, '2.0.0') });
+    assert.equal(result.errors.length, 1);
+    assertError(result, /ブランチのバージョン（v1\.4\.1）と一致しません/);
+  }
+  assertOk(checkVersions({ ...input, versionFileAfterMerge: versionFile('1.4.1', '2.0.0') }));
 });
 
 test('形式の誤ったラベルや、知らない製品のラベルは、リリースラベルとみなさない', () => {
@@ -193,7 +253,7 @@ test('リリースブランチ：その製品のラベルがなければ NG', ()
 });
 
 test('cherry-pick の PR：元のラベルのブランチが削除されていてもよい', () => {
-  const base = { baseBranch: 'release/product-a/v1.4.0', version: versionFile('1.4.0', '2.0.0'), branches: ['release/product-a/v1.4.0'] };
+  const base = { baseBranch: 'release/product-a/v1.4.0', version: versionFile('1.4.0', '2.0.0'), releaseBranches: ['release/product-a/v1.4.0'] };
   assertOk(check({ ...base, labels: ['cherry-pick', 'product-a/v1.3.0'] }));
   assertError(check({ ...base, labels: ['product-a/v1.3.0'] }), /v1\.3\.0 のリリースブランチがありません/);
   // main への PR はこの例外にしない
@@ -251,8 +311,8 @@ test('リリースブランチ：マージ後の VERSION がブランチ名と�
 });
 
 test('修正フェーズ：VERSION を上げるまでは、新しいバージョンのラベルは付けられない', () => {
-  const branches = [...BRANCHES, 'release/product-a/v1.2.1'];
-  const base = { baseBranch: 'release/product-a/v1.2.1', branches, labels: ['product-a/v1.2.1'] };
+  const releaseBranches = [...RELEASE_BRANCHES, 'release/product-a/v1.2.1'];
+  const base = { baseBranch: 'release/product-a/v1.2.1', releaseBranches, labels: ['product-a/v1.2.1'] };
   assertError(check({ ...base, version: versionFile('1.2.0', '1.2.0') }), /一致しません/);
   const bump = { ...base, affectedProducts: [], baseVersion: versionFile('1.2.0', '1.2.0') };
   assertOk(check({ ...bump, version: versionFile('1.2.1', '1.2.0') }));

@@ -1,0 +1,38 @@
+name: Rerun Release Checks
+
+# PR のイベントが起きない変更に合わせて、開いている PR のチェックをやり直す（ラベルは変えない）。
+# - リリースブランチを作った・削除した（create・delete）：main とリリースブランチに向けた PR のラベルのチェック
+# - main かリリースブランチの VERSION が変わった（push）：そのブランチに向けた PR のラベルと VERSION のチェック
+on:
+  create:
+  delete:
+  push:
+    branches:
+      - main
+      - 'release/**'
+    paths:
+      - VERSION
+
+permissions:
+  contents: read
+
+jobs:
+  rerun-release-checks:
+    name: rerun release checks
+    if: github.event_name == 'push' || (github.event.ref_type == 'branch' && startsWith(github.event.ref, 'release/'))
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write # ラベルと VERSION のチェックをやり直す
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/github-script@v9
+        with:
+          retries: 3 # GitHub API の一時的なエラー（5xx）はやり直す
+          script: |
+            const { rerunReleaseChecks } = require('./.github/scripts/rerun-release-checks.ts')
+            await rerunReleaseChecks({ github, context, core })
