@@ -29,9 +29,7 @@ async function createTag(github: GitHub, repo: Repository, name: string, sha: st
   await github.rest.git.createRef({ ...repo, ref: `refs/tags/${name}`, sha: tag.sha });
 }
 
-// rc もリリースも、main の VERSION を上げてから行う（開発フェーズの入り方の順番）。上げる前にリリースしてブランチを消すと、
-// VERSION を上げる PR が「上げる前のバージョンのリリースブランチがない」で通らなくなって main がこのバージョンのままになり、
-// main の PR にはリリース済みのこのバージョンのラベルしか付けられず（次のバージョンは VERSION より新しい）、変更がどこにも入らなくなる。
+// rc もリリースも、main の VERSION を上げてから行う（開発フェーズの入り方の順番）。
 function mainNotBumped(plan: { product: string; version: string }) {
   const main = versionAt('origin/main', plan.product);
   if (main && compareVersions(main, plan.version) > 0) return null;

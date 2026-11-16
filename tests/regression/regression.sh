@@ -110,15 +110,15 @@ make_pr() { # <名前> <マージ先> <変更するコマンド> [ラベル...] 
   echo "  (make_pr $name: #$n のラベルがそろいません：$have)" >&2
 }
 head_of() { local h=""; [ -z "$1" ] && return; for _ in 1 2 3; do h=$(gh pr view "$1" --repo $R --json headRefName --jq .headRefName 2>/dev/null) && [ -n "$h" ] && break; sleep 5; done; echo "$h"; }
-# head ブランチの release label check の実行のうち、since より後に作られたものがすべて終わるのを待ち、最後に作られたものの ID を出す
-label_run() {
-  local head=$1 since=$2 q total pending
+# workflow の head ブランチの実行のうち、since より後に作られたものがすべて終わるのを待ち、最後に作られたものの ID を出す
+check_run() {
+  local workflow=$1 head=$2 since=$3 q total pending
   { [ -z "$head" ] || [ -z "$since" ]; } && return
   q="[.[] | select(.createdAt >= \"$since\")]"
   for _ in $(seq 1 72); do
-    read -r total pending < <(gh run list --repo $R --workflow release-label-check.yml --branch "$head" --limit 30 --json createdAt,status --jq "$q | \"\(length) \([.[] | select(.status != \"completed\")] | length)\"")
+    read -r total pending < <(gh run list --repo $R --workflow "$workflow" --branch "$head" --limit 30 --json createdAt,status --jq "$q | \"\(length) \([.[] | select(.status != \"completed\")] | length)\"")
     if [ "${total:-0}" -gt 0 ] && [ "${pending:-1}" = 0 ]; then
-      gh run list --repo $R --workflow release-label-check.yml --branch "$head" --limit 30 --json databaseId,createdAt --jq "$q | sort_by(.createdAt) | .[-1].databaseId"
+      gh run list --repo $R --workflow "$workflow" --branch "$head" --limit 30 --json databaseId,createdAt --jq "$q | sort_by(.createdAt) | .[-1].databaseId"
       return
     fi
     sleep 5
@@ -136,23 +136,23 @@ run_messages() { # <run ID>：エラーと警告の行（ログがまだ取れ�
 run_log() { local text=""; for _ in 1 2 3 4; do text=$(gh run view "$1" --repo $R --log 2>/dev/null); [ -n "$text" ] && break; sleep 4; done; echo "$text" | cut -f3- | sed -E 's/^[0-9TZ:.-]+ //'; }
 # job の注釈（Environment の決まりで job が始まらなかったときの理由は、ログではなくここにだけ出る）
 run_annotations() { local job; for job in $(gh run view "$1" --repo $R --json jobs --jq '.jobs[].databaseId' 2>/dev/null); do gh api "repos/$R/check-runs/$job/annotations" --jq '.[].message' 2>/dev/null; done; }
-expect_label() { # <ID> <PR> <pass|fail> [正規表現] [since]
-  local id=$1 pr=$2 want=$3 pattern=${4:-} since=${5:-} run got text head
+expect_check() { # <workflow> <ID> <PR> <pass|fail> [正規表現] [since]
+  local workflow=$1 id=$2 pr=$3 want=$4 pattern=${5:-} since=${6:-} run got text head
   if [ -z "$pr" ]; then record NG "$id" "no PR to check (creation failed)"; return; fi
   head=$(head_of "$pr")
   [ -z "$since" ] && since=$(retry gh pr view "$pr" --repo $R --json createdAt --jq .createdAt 2>/dev/null)
   if [ -z "$head" ] || [ -z "$since" ]; then record NG "$id" "#$pr: cannot read the PR"; return; fi
-  run=$(label_run "$head" "$since")
-  if [ -z "$run" ]; then record NG "$id" "#$pr: label check did not finish"; return; fi
+  run=$(check_run "$workflow" "$head" "$since")
+  if [ -z "$run" ]; then record NG "$id" "#$pr: $workflow did not finish"; return; fi
   got=$(gh run view "$run" --repo $R --json conclusion --jq '.conclusion | if . == "success" then "pass" elif . == "failure" then "fail" else . end')
   text=$(run_messages "$run")
   if [ "$got" = "$want" ] && { [ -z "$pattern" ] || echo "$text" | grep -qE "$pattern"; }; then
-    record OK "$id" "#$pr label check=$got"
+    record OK "$id" "#$pr $workflow=$got"
   else
-    record NG "$id" "#$pr label check=$got (want $want${pattern:+ / $pattern})" "$(echo "$text" | oneline)"
+    record NG "$id" "#$pr $workflow=$got (want $want${pattern:+ / $pattern})" "$(echo "$text" | oneline)"
   fi
 }
-# Release Label Recheck のやり直しは同じ実行（attempt が増える）なので、PR のチェックの結果が変わるのを待つ
+# Rerun Release Checks のやり直しは同じ実行（attempt が増える）なので、PR のチェックの結果が変わるのを待つ
 label_bucket() { # <PR> <pass|fail>：release label check がその結果になるまで待ち、最後の結果を出す
   local b=""
   for _ in $(seq 1 60); do b=$(gh pr checks "$1" --repo $R --json name,bucket --jq '.[] | select(.name == "release label check") | .bucket' 2>/dev/null); [ "$b" = "$2" ] && break; sleep 5; done
@@ -167,13 +167,13 @@ update_if_behind() { # <PR>：マージの前にマージ先の最新を取り�
   local since
   [ "$(merge_state "$1")" = BEHIND ] || return 0
   since=$(since_now); gh pr update-branch "$1" --repo $R >/dev/null 2>&1; sleep 5
-  label_run "$(head_of "$1")" "$since" >/dev/null
+  check_run release-label-check.yml "$(head_of "$1")" "$since" >/dev/null
   gh pr checks "$1" --repo $R --watch --interval 10 >/dev/null 2>&1
 }
 expect_merge() { # <ID> <PR>
   local id=$1 pr=$2
   if [ -z "$pr" ]; then record NG "$id" "no PR to merge"; return; fi
-  label_run "$(head_of "$pr")" "1970-01-01T00:00:00Z" >/dev/null
+  check_run release-label-check.yml "$(head_of "$pr")" "1970-01-01T00:00:00Z" >/dev/null
   gh pr checks "$pr" --repo $R --watch --interval 10 >/dev/null 2>&1
   for _ in 1 2 3; do
     update_if_behind "$pr"
@@ -274,7 +274,7 @@ expect_run R2b "$(dispatch hotfix-release-prep.yml --ref reg-ref -f product=prod
 gpush origin --delete reg-ref 2>/dev/null
 
 # R3: normal release prep, merging a PR right after the checkout (catch-up path; timing dependent)
-R0=$(make_pr r0-race main "echo r0-$T > ProductA/r0.txt" "product-a/v$A0"); expect_label R0 "$R0" pass
+R0=$(make_pr r0-race main "echo r0-$T > ProductA/r0.txt" "product-a/v$A0"); expect_check release-label-check.yml R0 "$R0" pass
 BEFORE=$(latest_dispatch normal-release-prep.yml)
 gh workflow run normal-release-prep.yml --repo $R -f product=product-a -f bump=minor
 RUN=0; for _ in $(seq 1 45); do sleep 2; RUN=$(latest_dispatch normal-release-prep.yml); [ "$RUN" -gt "$BEFORE" ] && break; done
@@ -288,14 +288,14 @@ R0M=$(gh pr view "$R0" --repo $R --json mergeCommit --jq .mergeCommit.oid)
 git fetch -q origin
 if git merge-base --is-ancestor "$R0M" "origin/$RA" 2>/dev/null || [ -n "$(pr_for "cherry-pick-$R0-to-$RA")" ]; then record OK R3b "#$R0 is in $RA or has a cherry-pick PR to it"; else record NG R3b "#$R0 is neither in $RA nor cherry-picked"; fi
 P=$(pr_for "cherry-pick-$R0-to-$RA"); [ -n "$P" ] && expect_merge R3c "$P"
-PA=$(prep_pr "normal-release-prep/product-a/"); expect_label R3d "$PA" pass
+PA=$(prep_pr "normal-release-prep/product-a/"); expect_check release-label-check.yml R3d "$PA" pass
 ok_if R3e "the VERSION bump PR is created by the App and has no release label" test "$(author_of "$PA") $(label_names "$PA")" = "$APP "
 # リリースブランチでは Environment の決まりは通るので、スクリプトが main 以外を止める
 expect_run R2c "$(dispatch normal-release-prep.yml --ref "$RA" -f product=product-a -f bump=minor)" failure "main ブランチで実行してください"
 expect_run R2d "$(dispatch hotfix-release-prep.yml --ref "$RA" -f product=product-a)" failure "main ブランチで実行してください"
 expect_run R5 "$(dispatch release.yml --ref "$RA" -f step=rc)" failure "main の VERSION の product-a が $A0 のまま"
-# main の VERSION が上がると、そのバージョンのラベルが付いた PR のチェックを Release Label Recheck がやり直す（push の道。リリースブランチの作成・削除は RL 節）
-RV=$(make_pr rv-next main 'echo rv-$T > ProductA/rv.txt' "product-a/v$(next_minor "$A0")"); expect_label RV1 "$RV" fail "より新しいバージョンです"
+# main の VERSION が上がると、そのバージョンのラベルが付いた PR のチェックを Rerun Release Checks がやり直す（push の道。リリースブランチの作成・削除は RL 節）
+RV=$(make_pr rv-next main 'echo rv-$T > ProductA/rv.txt' "product-a/v$(next_minor "$A0")"); expect_check release-label-check.yml RV1 "$RV" fail "より新しいバージョンです"
 expect_merge R6 "$PA"
 ok_if RV2 "merging the VERSION bump re-runs the check of #$RV and it passes" test "$(label_bucket "$RV" pass)" = pass
 gh pr close "$RV" --repo $R --delete-branch >/dev/null 2>&1
@@ -336,39 +336,40 @@ L14=$(make_pr l14-newer main 'echo x >> ProductA/app.txt' "$NEWER")
 L15=$(make_pr l15-move-shared main 'git mv Shared/common.txt ProductA/common.txt' "$LA")
 L16=$(make_pr l16-move-in-a main 'git mv ProductA/app.txt ProductA/app2.txt' "$LA")
 L17=$(make_pr l17-move-b-to-a main 'git mv ProductB/app.txt ProductA/app-b.txt' "$LA")
-L18=$(make_pr l18-manual-bump main "sed -i '' 's#^product-a/$A\$#product-a/$(next_minor "$A")#' VERSION" "$NEWER")
+L18=$(make_pr l18-manual-bump main "sed -i '' 's#^product-a/$A\$#product-a/$(next_minor "$A")#' VERSION")
 L19=$(make_pr l19-readme-none main 'echo x >> README.md')
 L20=$(make_pr l20-readme-one main 'echo x >> README.md' "$LB")
 L21=$(make_pr l21-release-ok "$RA" 'echo x >> ProductA/app.txt' "product-a/v$A0")
 L22=$(make_pr l22-release-other "$RA" 'echo x >> ProductA/app.txt' "product-b/v$B0")
 L23=$(make_pr l23-archived main 'echo x >> ProductB/app.txt' "product-b/v2.1.0")
-expect_label L1 "$L1" fail "product-a に影響する変更ですが"
-expect_label L2 "$L2" pass
-expect_label L3 "$L3" fail "product-c に影響する変更ですが"
-expect_label L4 "$L4" pass
-expect_label L5 "$L5" pass
-expect_label L6 "$L6" fail "product-b に影響する変更ですが"
-expect_label L7 "$L7" pass
-expect_label L8 "$L8" fail "product-c に影響する変更ですが"
-expect_label L9 "$L9" pass
-expect_label L10 "$L10" fail "書かれていないパス"
-expect_label L11 "$L11" pass "書かれていないパス"
-expect_label L12 "$L12" pass
-expect_label L13 "$L13" fail "複数あります"
-expect_label L14 "$L14" fail "より新しいバージョンです"
-expect_label L15 "$L15" fail "product-b に影響する変更ですが"
-expect_label L16 "$L16" pass
-expect_label L17 "$L17" fail "product-b に影響する変更ですが"
-expect_label L18 "$L18" fail "release/product-a/v$A を作ってください"
-expect_label L19 "$L19" pass
-expect_label L20 "$L20" fail "product-b に影響する変更はありませんが"
-expect_label L21 "$L21" pass
-expect_label L22 "$L22" fail "だけを付けてください"
-expect_label L23 "$L23" fail "v2.1.0 のリリースブランチがありません"
-S=$(since_now); gh pr edit "$L2" --repo $R --remove-label "$LA" >/dev/null; expect_label L24a "$L2" fail "product-a に影響する変更ですが" "$S"
-S=$(since_now); gh pr edit "$L2" --repo $R --add-label "$LA" >/dev/null; expect_label L24b "$L2" pass "" "$S"
-S=$(since_now); gh pr edit "$L2" --repo $R --base "$RA" >/dev/null; expect_label L25a "$L2" fail "マージ先のブランチのバージョン（v$A0）より新しいバージョンです" "$S"
-S=$(since_now); gh pr edit "$L2" --repo $R --base main >/dev/null; expect_label L25b "$L2" pass "" "$S"
+expect_check release-label-check.yml L1 "$L1" fail "product-a に影響する変更ですが"
+expect_check release-label-check.yml L2 "$L2" pass
+expect_check release-label-check.yml L3 "$L3" fail "product-c に影響する変更ですが"
+expect_check release-label-check.yml L4 "$L4" pass
+expect_check release-label-check.yml L5 "$L5" pass
+expect_check release-label-check.yml L6 "$L6" fail "product-b に影響する変更ですが"
+expect_check release-label-check.yml L7 "$L7" pass
+expect_check release-label-check.yml L8 "$L8" fail "product-c に影響する変更ですが"
+expect_check release-label-check.yml L9 "$L9" pass
+expect_check release-label-check.yml L10 "$L10" fail "書かれていないパス"
+expect_check release-label-check.yml L11 "$L11" pass "書かれていないパス"
+expect_check release-label-check.yml L12 "$L12" pass
+expect_check release-label-check.yml L13 "$L13" fail "複数あります"
+expect_check release-label-check.yml L14 "$L14" fail "より新しいバージョンです"
+expect_check release-label-check.yml L15 "$L15" fail "product-b に影響する変更ですが"
+expect_check release-label-check.yml L16 "$L16" pass
+expect_check release-label-check.yml L17 "$L17" fail "product-b に影響する変更ですが"
+expect_check version-check.yml L18 "$L18" pass
+expect_check release-label-check.yml L18-label "$L18" pass
+expect_check release-label-check.yml L19 "$L19" pass
+expect_check release-label-check.yml L20 "$L20" fail "product-b に影響する変更はありませんが"
+expect_check release-label-check.yml L21 "$L21" pass
+expect_check release-label-check.yml L22 "$L22" fail "だけを付けてください"
+expect_check release-label-check.yml L23 "$L23" fail "v2.1.0 のリリースブランチがありません"
+S=$(since_now); gh pr edit "$L2" --repo $R --remove-label "$LA" >/dev/null; expect_check release-label-check.yml L24a "$L2" fail "product-a に影響する変更ですが" "$S"
+S=$(since_now); gh pr edit "$L2" --repo $R --add-label "$LA" >/dev/null; expect_check release-label-check.yml L24b "$L2" pass "" "$S"
+S=$(since_now); gh pr edit "$L2" --repo $R --base "$RA" >/dev/null; expect_check release-label-check.yml L25a "$L2" fail "マージ先のブランチのバージョン（v$A0）より新しいバージョンです" "$S"
+S=$(since_now); gh pr edit "$L2" --repo $R --base main >/dev/null; expect_check release-label-check.yml L25b "$L2" pass "" "$S"
 for n in $L2 $L3 $L4 $L5 $L6 $L7 $L8 $L9 $L10 $L11 $L12 $L13 $L14 $L15 $L16 $L17 $L18 $L19 $L20 $L21 $L22 $L23; do gh pr close "$n" --repo $R --delete-branch >/dev/null 2>&1; done
 gh pr close "$L1" --repo $R >/dev/null 2>&1
 
@@ -390,7 +391,7 @@ log "RL. Rechecking labels when release branches or VERSION change"
 # VERSION の push でのやり直しは、VERSION を上げる R6 のところ（RV1・RV2）で確かめる
 RLV=$(echo "$(version_of product-a)" | awk -F. '{print $1"."$2-1".9"}')
 gh label create "product-a/v$RLV" --repo $R --color 1d76db --description "Release label" >/dev/null 2>&1
-RL=$(make_pr rl-recheck main 'echo rl-$T > ProductA/rl.txt' "product-a/v$RLV"); expect_label RL1 "$RL" fail "v$RLV のリリースブランチがありません"
+RL=$(make_pr rl-recheck main 'echo rl-$T > ProductA/rl.txt' "product-a/v$RLV"); expect_check release-label-check.yml RL1 "$RL" fail "v$RLV のリリースブランチがありません"
 git fetch -q origin && gpush origin "origin/main:refs/heads/release/product-a/v$RLV" 2>/dev/null
 ok_if RL2 "creating release/product-a/v$RLV re-runs the check of #$RL and it passes" test "$(label_bucket "$RL" pass)" = pass
 gpush origin --delete "release/product-a/v$RLV" 2>/dev/null
@@ -432,7 +433,7 @@ expect_merge C4e "$NEWB"
 MISS=$(echo "$C0" | awk -F. '{print $1"."$2-1".9"}')
 gh label create "product-c/v$MISS" --repo $R --color 1d76db --description "Release label" >/dev/null 2>&1
 gpush origin "origin/$RC:refs/heads/release/product-c/v$MISS" 2>/dev/null
-C5=$(make_pr c5-missing main 'echo c5-$T > ProductC/c5.txt' "product-c/v$MISS"); expect_label C5 "$C5" pass
+C5=$(make_pr c5-missing main 'echo c5-$T > ProductC/c5.txt' "product-c/v$MISS"); expect_check release-label-check.yml C5 "$C5" pass
 gpush origin --delete "release/product-c/v$MISS" 2>/dev/null
 expect_merge C5b "$C5"; wait_cherry_run "$C5" >/dev/null
 P=$(pr_for "cherry-pick-$C5-to-$RC"); ok_if C5c "the remaining $RC gets a cherry-pick (#$P)" test -n "$P"
@@ -542,9 +543,9 @@ expect_run H1c "$(dispatch release.yml --ref "release/product-c/v$CH" -f step=rc
 Y=$(make_pr h1-y main 'echo y-$T > ProductC/h1y.txt' "product-c/v$CH"); expect_merge H1d "$Y"; RUN=$(wait_cherry_run "$Y")
 expect_run H1e "$RUN" success
 YP=$(pr_for "cherry-pick-$Y-to-release/product-c/v$CH")
-expect_label H1f "$YP" fail "一致しません"
+expect_check version-check.yml H1f "$YP" fail "一致しません"
 expect_merge H1g "$HC"
-S=$(since_now); gh pr update-branch "$YP" --repo $R >/dev/null 2>&1; expect_label H1h "$YP" pass "" "$S"
+S=$(since_now); gh pr update-branch "$YP" --repo $R >/dev/null 2>&1; expect_check version-check.yml H1h "$YP" pass "" "$S"
 expect_merge H1i "$YP"
 expect_run H1j "$(dispatch release.yml --ref "release/product-c/v$CH" -f step=rc)" success "product-c/v$CH-rc.1 を"
 ok_if H1k "Hotfix Release Preparation does not cherry-pick #$X (omitted from v$C0)" test -z "$(pr_for "cherry-pick-$X-to-release/product-c/v$CH")"
@@ -618,12 +619,12 @@ git switch -q -C reg-force-m origin/main && git commit -q --amend -m "rewrite"
 for _ in 1 2 3; do OUT=$(git push -f origin reg-force-m:main 2>&1); echo "$OUT" | grep -q "GH013" && break; sleep 15; done
 echo "$OUT" | grep -q "Cannot force-push" && record OK RS2m "a force push to main is blocked" || record NG RS2m "a force push to main is not blocked" "$(echo "$OUT" | oneline)"
 git switch -q main; git branch -D reg-direct reg-direct-r reg-force reg-force-m -q
-NGP=$(make_pr rs3-no-label main 'echo x >> ProductA/app.txt'); expect_label RS3 "$NGP" fail
+NGP=$(make_pr rs3-no-label main 'echo x >> ProductA/app.txt'); expect_check release-label-check.yml RS3 "$NGP" fail
 gh pr merge "$NGP" --repo $R --squash --admin >/dev/null 2>&1 && record NG RS3b "a PR with a failing check was merged with --admin" || record OK RS3b "a PR with a failing check cannot be merged even with --admin"
-NGR=$(make_pr rs3r-no-label "release/product-c/v$CH" 'echo x >> ProductC/app.txt'); expect_label RS3r "$NGR" fail
+NGR=$(make_pr rs3r-no-label "release/product-c/v$CH" 'echo x >> ProductC/app.txt'); expect_check release-label-check.yml RS3r "$NGR" fail
 gh pr merge "$NGR" --repo $R --squash --admin >/dev/null 2>&1 && record NG RS3rb "a release-branch PR with a failing check was merged with --admin" || record OK RS3rb "a release-branch PR with a failing check cannot be merged even with --admin"
-OKP=$(make_pr rs4-merge-commit main 'echo x >> ProductA/app.txt' "product-a/v$(version_of product-a)"); expect_label RS4 "$OKP" pass
-OKR=$(make_pr rs4r-merge-commit "release/product-c/v$CH" 'echo x >> ProductC/app.txt' "product-c/v$CH"); expect_label RS4r "$OKR" pass
+OKP=$(make_pr rs4-merge-commit main 'echo x >> ProductA/app.txt' "product-a/v$(version_of product-a)"); expect_check release-label-check.yml RS4 "$OKP" pass
+OKR=$(make_pr rs4r-merge-commit "release/product-c/v$CH" 'echo x >> ProductC/app.txt' "product-c/v$CH"); expect_check release-label-check.yml RS4r "$OKR" pass
 # GitHub はルールセット（squash のみ）で止めたときも「Merge commits are not allowed on this repository」と返し、
 # メッセージではリポジトリの設定と区別できない。そこで、ルールセットのかからないブランチ（reg-base）では同じ設定で
 # マージコミットができることを対照として確かめる

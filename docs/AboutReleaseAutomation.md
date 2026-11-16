@@ -7,8 +7,9 @@
 | ワークフロー | 動くとき | すること |
 |---|---|---|
 | CI（`ci.yml`） | PR、マージキュー | 変更が影響する製品のテストと、自動化のスクリプトのテストを動かし、結果を `ci` にまとめる |
-| Release Label Check（`release-label-check.yml`） | `main` と `release/` で始まるブランチへの PR、マージキュー | リリースラベルの決まりを確かめる |
-| Release Label Recheck（`release-label-recheck.yml`） | リリースブランチの作成・削除、保護ブランチの VERSION の変更 | 影響する開いている PR の、ラベルのチェックをやり直す |
+| Release Label Check（`release-label-check.yml`） | `main` と `release/` で始まるブランチへの PR、マージキュー | リリースラベルの決まりを確かめる。VERSION を変える PR のラベルは変更後のバージョンにする |
+| Version Check（`version-check.yml`） | `main` と `release/` で始まるブランチへの PR、マージキュー | main では降版の禁止とパッチ 0、release ではブランチ名との一致を確かめる。ラベルは使わない |
+| Rerun Release Checks（`rerun-release-checks.yml`） | リリースブランチの作成・削除、保護ブランチの VERSION の変更 | ブランチの作成・削除では Release Label Check を、VERSION の変更では Version Check もやり直す |
 | Cherry-Pick（`cherry-pick.yml`） | 保護ブランチへの PR のマージ、手で実行（`main`） | ラベルの範囲のほかのリリースブランチへ、cherry-pick の PR を作る |
 | Normal Release Preparation（`normal-release-prep.yml`） | 手で実行（`main`） | `main` からリリースブランチを作り、`main` の VERSION を上げる PR を作る |
 | Hotfix Release Preparation（`hotfix-release-prep.yml`） | 手で実行（`main`） | 製品の最新のリリースタグから修正フェーズのリリースブランチを作り、その VERSION を上げる PR を作る |
@@ -20,10 +21,10 @@
 
 - 製品名の元は VERSION（1 行 1 製品で `product-name/X.Y.Z`）。
 - 変更が影響する製品は、`.github/product-paths.yml` のパスで決める。複数の製品で使うパスは、使う製品すべてに書く。どこにも書かれていないパスの変更は、すべての製品に影響するとみなす。`none` に書いたパス（VERSION、docs、.github など）は、どの製品にも影響しない（`ci.yml` を変えたときは、CI がすべての製品のテストを動かす）。ファイルの移動は、移動元と移動先の両方の変更として数える。
-- 必須チェックは `release label check` と `ci`。両方とも GitHub のテスト用マージコミット（マージキューではマージグループのコミット）を確かめる。比較基準の `base_sha` は、PR ではその第 1 親、キューではイベントの `base_sha` とし、差分と変更前の VERSION に共通で使う。テストのジョブは `ci` にまとめ、飛ばしたジョブは通った扱いにする。
-- PR のマージ先、ラベル、今あるリリースブランチは、実行した時点の状態を読み直す。Release Label Check は、再実行でも現在の `refs/pull/<PR 番号>/merge` を取得し、その第 1 親との差分と両方の VERSION を調べる。マージキューでは、イベントの `base_sha` と合成済みコミットを比べる。人が出した PR のラベルは、自動化では変えない（ただし、cherry-pick のブランチ名の PR には、Cherry-Pick が元の PR のアーカイブされていないラベルと `cherry-pick` ラベルを付ける）。
+- 必須チェックは `release label check`、`version check`、`ci`。いずれも GitHub のテスト用マージコミット（マージキューではマージグループのコミット）を確かめる。比較基準の `base_sha` は、PR ではその第 1 親、キューではイベントの `base_sha` とし、差分と変更前の VERSION に共通で使う。テストのジョブは `ci` にまとめ、飛ばしたジョブは通った扱いにする。
+- PR のマージ先、ラベル、今あるリリースブランチは、実行した時点の状態を読み直す。Release Label Check と Version Check は、再実行でも現在の `refs/pull/<PR 番号>/merge` を取得する。Release Label Check はその第 1 親との差分と両方の VERSION を、Version Check は両方の VERSION を調べる。マージキューでは、イベントの `base_sha` と合成済みコミットを比べる。人が出した PR のラベルは、自動化では変えない（ただし、cherry-pick のブランチ名の PR には、Cherry-Pick が元の PR のアーカイブされていないラベルと `cherry-pick` ラベルを付ける）。
 - 自動化の GitHub App の秘密鍵は Environment `automation-app` の秘密 `AUTOMATION_APP_PRIVATE_KEY` に、Client ID は変数 `AUTOMATION_APP_CLIENT_ID` に置く。Environment は `main` と `release/**/*` でだけ使えるようにする（どちらもコードにはない設定）。App には Contents・Issues・Pull requests・Workflows の書き込みの権限が要り、ルールセットの例外にもする。
-- 使うワークフローとスクリプト：Cherry-Pick と 2 つの Release Preparation は、`main` のもの。Tag Creation は、実行したリリースブランチのもの。Release Label Recheck は、イベントが起きたブランチのもの（削除では `main`）。PR の CI と Release Label Check のワークフローは、イベントのテスト用マージコミットのもの。CI は全ジョブでイベントの `github.sha` を取得し、コード・スクリプト・パス設定をそろえる。Release Label Check のスクリプトとパス設定は、検査するマージコミットから取る（再実行では現在のもの）。CI は PR の情報を API で読まず、現在のマージ先とラベルの取得は Release Label Check で行う。
+- 使うワークフローとスクリプト：Cherry-Pick と 2 つの Release Preparation は、`main` のもの。Tag Creation は、実行したリリースブランチのもの。Rerun Release Checks は、イベントが起きたブランチのもの（削除では `main`）。PR の CI・Release Label Check・Version Check のワークフローは、イベントのテスト用マージコミットのもの。CI は全ジョブでイベントの `github.sha` を取得し、コード・スクリプト・パス設定をそろえる。Release Label Check と Version Check のスクリプトは、検査するマージコミットから取る（再実行では現在のもの）。この 2 つのうち、パス設定を使うのは Release Label Check だけ。CI は PR の情報を API で読まない。Release Label Check は現在のマージ先とラベルを、Version Check は現在のマージ先を読む（マージキューではイベントのマージ先を使う）。
 
 ## 入るべきリリースと、入っているか
 
@@ -42,9 +43,14 @@ Normal Release Preparation と Tag Creation は、同じ定義を使う（`rules
 - リリースブランチへの PR には、どの製品にも影響しない変更でも、そのブランチの製品のリリースラベルが要る。ただし、`cherry-pick` ラベルの付いた PR は、元のラベルがアーカイブ済みで引き継げないため、リリースラベルがなくてもよい。
 - `cherry-pick` ラベルの付いたリリースブランチへの PR は、元のリリースラベルのブランチが削除済みでもよく、他の製品のラベルも残してよい。ラベルの検査は行き先の製品に対して行い、バージョンの上限と VERSION のチェックは通常の PR と同じ。
 - 形式に合わないラベルと、VERSION にない製品のラベルは、リリースラベルとみなさない（無視する）。
-- `main` の VERSION を変えるときは、パッチを 0 にする（パッチは修正フェーズで使う）。
 - VERSION を変える PR に、その製品のリリースラベルを付けるなら、変えた後のバージョンにする。
 - マージ先とコンフリクトしている PR は、通らない。
+
+### VERSION
+
+- release への PR では、マージ後の VERSION の対象製品のバージョンを、ブランチ名のバージョンと一致させる。cherry-pick の PR にも適用する。
+- `main` では、既存の製品の VERSION を下げない。上げるときはパッチを 0 にする。新しく追加した製品は対象外。
+- `main` の VERSION を上げるために、変更前のバージョンのリリースブランチが存在する必要はない。Normal Release Preparation の実行順序は変わらず、先にリリースブランチを作ってから VERSION を上げる PR を作る。
 
 ### Cherry-Pick
 
@@ -61,7 +67,7 @@ Normal Release Preparation と Tag Creation は、同じ定義を使う（`rules
 - 作るリリースブランチのバージョンは、Normal Release Preparation では、実行した時点の `main` の VERSION。Hotfix Release Preparation では、その製品の最新（バージョンがいちばん大きい）のリリースタグのパッチを 1 上げたもの。
 - Normal Release Preparation は、`main` の VERSION の minor か major を上げる。
 - 次のバージョンのリリースラベルと VERSION を上げる PR は、自動化が作る（PR の担当者は実行した人）。`main` への PR にはリリースラベルを付けず、修正フェーズのリリースブランチへの PR には、上げた後のバージョンのリリースラベルを付ける。
-- VERSION を上げる PR をマージするまで、`main` への次のバージョンのラベルの PR と、修正フェーズのリリースブランチへの PR（cherry-pick の PR も）は、Release Label Check を通らない（マージすると、Release Label Recheck がやり直す）。
+- VERSION を上げる PR をマージするまで、`main` への次のバージョンのラベルの PR は Release Label Check を、修正フェーズのリリースブランチへの PR（cherry-pick の PR も）は Version Check を通らない。マージすると、Rerun Release Checks が両方をやり直す。
 - Hotfix Release Preparation は、最新のリリースタグからだけ作る（それより古いバージョンの修正フェーズのリリースブランチは、管理者が作る）。リリースしたバージョンのリリースブランチが残っているとき（Tag Creation の release が済んでいないとき）と、タグのコミットに `.github/scripts/changes.ts`（TypeScript 移行前は `changes.js`）がない（今の自動化を入れる前の）ときは作らない。
 - Hotfix Release Preparation は、前のリリースで見送った変更を自動では取り込まない。修正フェーズに入れる変更は、その修正バージョンのリリースラベルを指定して PR を出す。
 - 途中で止まったときは、Actions の Re-run で続きから進める（済んだことは重ねてしない）。Normal Release Preparation を Run workflow で実行し直すのは、`main` の VERSION を上げる PR をマージする前だけにする（マージした後だと、次のバージョンの準備が始まる）。VERSION を上げる PR がコンフリクトしたときは、同じ入力で実行し直すと、最新のマージ先の上に作り直す（PR に手で足したコミットは消える）。
@@ -77,11 +83,11 @@ Normal Release Preparation と Tag Creation は、同じ定義を使う（`rules
 
 ## 自動化ではできないこと・気をつけること
 
-- 自動化の変更が効くとき：`main` で動くもの（Cherry-Pick、2 つの Release Preparation）への変更は、`main` にマージするとすぐ効く。リリースブランチで動くもの（Tag Creation、リリースブランチへの PR の CI・Release Label Check、リリースブランチでの Release Label Recheck）への変更は、そのあと `main` から作るリリースブランチから効く（修正フェーズのリリースブランチは、リリースタグの `.github` を使う）。`.github` だけを変える PR にはリリースラベルを付けないので、今あるリリースブランチには cherry-pick されない。必須チェックや入るべきリリースの定義を変えるときは、今あるリリースブランチとの食い違いに気をつける（要るなら、そのブランチにも PR で入れる）。
+- 自動化の変更が効くとき：`main` で動くもの（Cherry-Pick、2 つの Release Preparation）への変更は、`main` にマージするとすぐ効く。リリースブランチで動くもの（Tag Creation、リリースブランチへの PR の CI・Release Label Check・Version Check、リリースブランチでの Rerun Release Checks）への変更は、そのあと `main` から作るリリースブランチから効く（修正フェーズのリリースブランチは、リリースタグの `.github` を使う）。`.github` だけを変える PR にはリリースラベルを付けないので、今あるリリースブランチには cherry-pick されない。必須チェックや入るべきリリースの定義を変えるときは、今あるリリースブランチとの食い違いに気をつける（要るなら、そのブランチにも PR で入れる）。
 - 2 つの Release Preparation と Tag Creation は、実行した人を確かめない。Actions を実行できる人なら、App を通してリリースブランチとタグを作り、リリースブランチを削除できる。
 - 2 つの Release Preparation と Tag Creation は、App のトークンを作ってから動く。秘密鍵がなければ、何も作らずに止まる。
 - Cherry-Pick の行き先は、実行した時点で今あるリリースブランチだけ。あとで作ったブランチに入っていない変更の Cherry-Pick を実行するのは、Normal Release Preparation だけ。管理者が手で作ったリリースブランチでは、そのバージョンのリリースラベルと VERSION を上げる PR を手で作り、rc が書き出した PR ごとに Cherry-Pick を手で実行する。
-- Release Label Recheck は、最初の実行から 30 日を過ぎたチェックをやり直せない（GitHub の制限）。そのときは失敗して PR を書き出すので、その PR に push するか、ラベルを付け直す。
+- Rerun Release Checks は、最初の実行から 30 日を過ぎたチェックをやり直せない（GitHub の制限）。そのときは失敗して PR を書き出すので、その PR に push して新しい実行を作る。ラベルのチェックだけなら、ラベルを付け直してもよい。
 - `.github/product-paths.yml` のパスと製品の対応が実際の依存と合っているかと、`ci.yml` の製品のテストのジョブ（`ci` の `needs` も）が VERSION の製品とそろっているかは、確かめない（テストのジョブがない製品の変更は、テストなしで `ci` が通る）。
 
 ## 変えるとき
